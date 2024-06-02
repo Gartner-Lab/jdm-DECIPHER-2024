@@ -1,0 +1,2346 @@
+---
+title: "jdm_crosslong_decipher"
+output: 
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include = FALSE}
+knitr::opts_knit$set(root.dir = '~/Library/CloudStorage/Box-Box/')
+
+```
+
+```{r load libraries}
+#Script to run DECIPHER pipeline on JDM cross-long study data post-nmf run and visualize results
+library(Seurat)
+library(ggplot2)
+library(svglite)
+library(rlist)
+library(ape)
+library(matrixStats)
+library(gridExtra)
+library(patchwork)
+library(geiger)
+library(igraph)
+library(dplyr)
+library(parallel)
+library(reticulate)
+library(wTO)
+library(gplots)
+library(RColorBrewer)
+library(DescTools)
+library(fgsea)
+library(msigdbr)
+library(ggridges)
+library(stringr)
+```
+#load functions from DECIPHER method by 
+[Murrow, Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
+```{r source}
+source('~/Library/CloudStorage/Box-Box/GRLM_Cell_Networks_Paper/Scripts/DECIPHER-seq.functions.R')
+source('~/Library/CloudStorage/Box-Box/GRLM_Cell_Networks_Paper/Scripts/DECIPHER-seq.util.R')
+source('~/Library/CloudStorage/Box-Box/GRLM_Cell_Networks_Paper/Scripts/boot.cor.complete.R')
+source('~/Library/CloudStorage/Box-Box/GRLM_Cell_Networks_Paper/Scripts/cor.m.boot.test.R')
+```
+
+```{r load nmf k sweep results}
+jdm_crosslong_nmf <- readRDS('neely.jdm/NMF/results_summary/nmf_ksweep_results_compiled.rds') 
+```
+
+```{r build/load trees, outlier objects}
+#first, build phylo trees
+phylo_trees <- lapply(jdm_crosslong_nmf, build_phylo_tree)
+#phylo_trees <- readRDS('neely.jdm/NMF/DECIPHER_outputs/crosslong_phylo_trees.rds')
+
+```
+
+```{r outliers B cells}
+#calculate outlier scores for K sweep 
+program_outlier_score <- lapply(jdm_crosslong_nmf, identify_outlier_programs)
+
+#plot program outlier scores for each cell type
+outlier_plots <- lapply(program_outlier_score$B, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('B cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers CD8T}
+outlier_plots <- lapply(program_outlier_score$CD8T, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('CD8T cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers CD4T}
+outlier_plots <- lapply(program_outlier_score$CD4T, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('CD4T cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+
+```
+
+```{r outliers myeloid}
+outlier_plots <- lapply(program_outlier_score$myeloid, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('myeloid cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers NK}
+outlier_plots <- lapply(program_outlier_score$NK, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('NK cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers gdT}
+outlier_plots <- lapply(program_outlier_score$gdT, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('gdT cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r phylo thresholds}
+#define distance threshold for phylo trees
+suggested_thresholds = suggest_dist_thresh(phylo_trees)
+suggested_thresholds 
+#use 0.2 based on hists
+p = plot_hists(phylo_trees, thresh.use = 0.2)
+marrangeGrob(p, ncol = 3, nrow = 2)
+
+```
+
+```{r partition trees}
+#partition trees for calculating subtree K metric
+phylo_partitions = mapply(partition_phylo_tree, x = phylo_trees, y = program_outlier_score, dist.thresh =0.3, outlier.thresh = 5, SIMPLIFY = F)
+par(mfrow=c(1,6), mar=c(1,1,1,1))
+p <- plot_phylo_trees(phylo_trees, phylo_partitions)
+```
+
+```{r k metrics}
+#Method calculates weighted number of subtrees in phylo tree covered by rank at given K
+K_metrics = mapply(calculate_K_metric, clusters = phylo_partitions, K.max = 40, SIMPLIFY = FALSE)
+```
+
+```{python kneed}
+#load python modules necessary for kneed-based K suggestion
+import matplotlib as plt
+from kneed import DataGenerator as dg, KneeLocator
+import kneed
+```
+
+```{r pick k knee}
+#K suggest method for ID'ing elbow on weighted subtree plot based on kneedle algorithm as implemented by Kevin Arvai
+k.use = mapply(suggest_k_knee, k_metrics = K_metrics, sensitivity =1)
+print(k.use)
+```
+[kneed package](https://github.com/arvkevi/kneed)
+
+```{r plot k knee}
+k_metric_plots <- lapply(1:length(K_metrics), function(x){
+  temp= data.frame(rank= 2:(dim(K_metrics[[x]])[1]+1), subtrees = K_metrics[[x]]$weighted_n_subtrees)
+  temp = na.omit(temp)
+  y = predict(loess(temp$subtrees~temp$rank, temp))
+  temp = cbind(temp, y)
+  ggplot(temp, aes(x = rank, y = y))+
+      ylab("Weighted N subtrees")+ xlab("NMF Rank K")+
+      theme_classic()+
+      geom_point(shape = 16) +
+      scale_color_manual(values = cell_type_cols[x])+
+      theme(legend.position = 'none') +
+      ggtitle(paste(names(K_metrics)[x], ' cells'))+
+      geom_vline(xintercept = k.use[[x]])
+})
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/k_metric_elbow_plots.pdf')
+marrangeGrob(k_metric_plots, ncol = 2, nrow = 3)
+dev.off()
+
+```
+
+```{r}
+#collect nmf results at optimal K
+NMF_results_atK <- mapply(NMF_results_opt_k, jdm_crosslong_nmf, k.use, program_outlier_score, SIMPLIFY = F)
+saveRDS(NMF_results_atK, file = 'neely.jdm/NMF/DECIPHER_outputs/jdm_crosslong_nmf_at_k.rds')
+```
+
+```{r reload}
+NMF_results_atK <- readRDS('neely.jdm/NMF/DECIPHER_outputs/jdm_crosslong_nmf_at_k.rds')
+```
+
+```{r update metadata}
+#update metadata to include HC category
+metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/metadata.RDS')
+covariates = read.csv('neely.jdm/crosslong_02SEP21/JDM_additional_covariates.csv')
+covariates$DA_cat[which(covariates$DA_cat == '')] =  'HC'
+metadata$dis_act = metadata$study_id_visit
+metadata$dis_act =  plyr::mapvalues(metadata$dis_act, from = covariates$study_id_visit, to = covariates$DA_cat, warn_missing = F)
+metadata$dis_act = factor(metadata$dis_act, levels = c('high_da', 'low_da', 'inactive', 'HC'))
+saveRDS(metadata, file = 'neely.jdm/crosslong_02SEP21/Objects/metadata.RDS')
+```
+
+```{r calc sample level H scores}
+#need course grained cell labels to calculate H scores (expression scores)
+#raw NMF results stored in NMF_results_atK don't have course grained cell labels - pull cell IDs from NMF results
+metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/metadata.RDS')
+cell.types = names(NMF_results_atK)
+expression_scores <- mcmapply(function(nmf, metadata, cell_type){
+  cell_ids = rownames(nmf$H)
+  meta_cells = metadata[cell_ids,]
+  meta_cells$Type = cell_type
+  meta_cells$Sample = meta_cells$study_id_visit
+  calc.H.score(nmf, meta_cells)}, 
+  nmf = NMF_results_atK, metadata = list(metadata), cell_type = cell.types, mc.cores = 6, SIMPLIFY = F)
+```
+
+```{r cor matrices}
+#calculate correlation matrices from expression scores
+#specify order of expression scores to match across cell types - important for patient matching for network construction
+order = rownames(expression_scores$Bcells) 
+expression_scores = lapply(expression_scores, function(x){
+  x[order,]
+})
+expression_score_cor = cor.m.boot.test(list.cbind(expression_scores), null.hyp = 0, alternative = 'two.sided')
+expression_score_cor$sig.cor = expression_score_cor$cor
+expression_score_cor$sig.cor[which(expression_score_cor$p> 0.05)] = NA
+
+saveRDS(expression_score_cor, file = 'neely.jdm/NMF/DECIPHER_outputs/expression_score_cor.rds')
+saveRDS(expression_scores, file = 'neely.jdm/NMF/DECIPHER_outputs/expression_scores.rds')
+```
+
+```{r reload expression objects}
+expression_scores <- readRDS('neely.jdm/NMF/DECIPHER_outputs/expression_scores.rds')
+expression_score_cor <- readRDS('neely.jdm/NMF/DECIPHER_outputs/expression_score_cor.rds')
+```
+
+```{r network construction and community detection}
+#Construct network based on adjacency matrix
+Network <- Construct_network(expression_score_cor)
+adjacency_matrix <- Network$mat
+py_run_string("import leidenalg as la; import igraph as ig; import numpy as np")
+py_run_string("G = ig.Graph.Weighted_Adjacency(r.adjacency_matrix.tolist())")
+
+# sweep across a range of resolutions
+py_run_string("profile = optimiser.resolution_profile(G, la.CPMVertexPartition, 
+        weights = 'weight', resolution_range=(0.001, 0.4), number_iterations = 0)")
+sweep = py$profile
+modularity = lapply(sweep, function(x){x$modularity})
+# Use "resolution" that gives max modularity
+partition_use = sweep[[which.max(unlist(modularity))]]
+py_run_string("partition = r.partition_use")
+py_run_string("diff = optimiser.optimise_partition(partition)")
+
+# Optimise this partition
+while(py$diff!=0){
+  py_run_string("diff = optimiser.optimise_partition(partition)")
+  py_run_string("print(diff)")
+}
+clustering_res = py$partition
+modules = clustering_res$membership + 1
+names(modules) = colnames(adjacency_matrix)
+Network$modules = modules
+
+#Filter network based on modules - poorly connected nodes excluded
+Network <- Filter_network(Network)
+
+saveRDS(Network, 'neely.jdm/NMF/DECIPHER_outputs/network_20230303.rds')
+```
+
+```{r reload}
+Network = readRDS('neely.jdm/NMF/DECIPHER_outputs/network_20230303.rds')
+```
+
+```{r plotting configs}
+#set/customize module and cell type colors 
+modules = sort(Network$modules)
+network_module_cols_filtered=network_module_cols[as.numeric(levels(as.factor(unlist(V(Network$filtered_network)$module))))]
+names(network_module_cols_filtered) = levels(as.factor(unlist(V(Network$filtered_network)$module)))
+excluded_module_cols = colorRampPalette(brewer.pal(9, 'Greys'))(max(modules)-length(network_module_cols_filtered))
+names(excluded_module_cols) = unique(modules)[which(unique(modules) %ni% names(network_module_cols_filtered))]
+module_palette_all = c(network_module_cols_filtered, excluded_module_cols)
+module_palette_all = module_palette_all[order(as.numeric(names(module_palette_all)))]
+module_colors = module_palette_all[as.numeric(as.factor(modules))]
+
+cell_types = gsub('([A-Za-z0-9.])\\.R[0-9]{2,2}_Program[0-9]{1,2}', replacement = '\\1', names(modules))
+cell_type.cols = cell_type_cols[as.numeric(as.factor(cell_types))]
+```
+
+
+```{r plot networks}
+#plot filtered network
+vertex.identity = gsub('([A-Za-z0-9.])\\.R[0-9]{2,2}_Program[0-9]{1,2}', replacement = '\\1', names(V(Network$filtered_network)))
+Network$filtered_network = set_vertex_attr(Network$filtered_network, 'group', value = vertex.identity)
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_filtered_by_celltype.pdf', width = 8, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=cell_type_cols[as.numeric(as.factor(unlist(V(Network$filtered_network)$group)))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label.cex=0.5, vertex.size = 7, vertex.label = NA, vertex.frame.color=NA)
+legend("right",  inset = -0.05,    
+         legend = levels(as.factor(unlist(V(Network$filtered_network)$group))),
+         pt.bg = cell_type_cols, 
+         col = cell_type_cols,
+         pch = 21, bty = "n", title = "Cell Type")
+dev.off()
+```
+
+```{r plot network with program labels - for W matrix annotation}
+#plot network with program labels
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_filtered_by_celltype_labelled.pdf', width = 12, height = 12)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=cell_type_cols[as.numeric(as.factor(unlist(V(Network$filtered_network)$group)))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label.cex=0.5, vertex.size = 5, vertex.label = names(V(Network$filtered_network)), vertex.frame.color=NA)
+legend("right",  inset = -0.05,    
+         legend = levels(as.factor(unlist(V(Network$filtered_network)$group))),
+         pt.bg = cell_type_cols, 
+         col = cell_type_cols,
+         pch = 21, bty = "n", title = "Cell Type")
+dev.off()
+```
+
+```{r plot networks - unfiltered}
+#plot unfiltered network
+vertex.identity = gsub('([A-Za-z0-9.])\\.R[0-9]{2,2}_Program[0-9]{1,2}', replacement = '\\1', names(V(Network$network)))
+Network$network = set_vertex_attr(Network$network, 'group', value = vertex.identity)
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_unfiltered_by_celltype.pdf', width = 8, height = 8)
+plot(Network$network, layout = Network$network_coords, 
+     vertex.color=cell_type_cols[as.numeric(as.factor(unlist(V(Network$network)$group)))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$network)$sign>0)], vertex.label.cex=0.5, vertex.size = 7, vertex.label = NA, vertex.frame.color=NA)
+legend("right",  inset = -0.05,    
+         legend = levels(as.factor(unlist(V(Network$network)$group))),
+         pt.bg = cell_type_cols, 
+         col = cell_type_cols,
+         pch = 21, bty = "n", title = "Cell Type")
+dev.off()
+```
+
+```{r}
+#plot filtered colored by module
+Network$filtered_network = set_vertex_attr(Network$filtered_network, 'module', value = Network$filtered_modules)
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_filtered_colored_by_module.pdf', width = 8, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=network_module_cols[as.factor(unlist(V(Network$filtered_network)$module))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label.cex=0.5, vertex.size = 7, vertex.label = NA, vertex.frame.color=NA)
+legend("right",  inset = 0.05,    
+         legend = levels(as.factor(unlist(V(Network$filtered_network)$module))),
+         pt.bg = network_module_cols, 
+         col = network_module_cols,
+         pch = 21, bty = "n", title = "Module")
+dev.off()
+    
+saveRDS(Network, 'neely.jdm/NMF/DECIPHER_outputs/network_20230303.rds')
+
+```
+
+```{r reload network}
+Network <- readRDS('neely.jdm/NMF/DECIPHER_outputs/network_20230303.rds')
+```
+
+```{r heatmap view of network}
+#plot heatmap view of network
+pdf('jdm_pbmc_model/crosslong_manuscript/figures/plots/programs_Hscore_heatmap_prefilter.pdf', height = 11, width = 11)
+heatmap.2(as.matrix(expression_score_cor$cor[names(modules), names(modules)]), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(-1,1,length.out=101), ColSideColors = module_colors, 
+          RowSideColors = cell_type.cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = F, Colv=F, dendrogram = 'none',
+          labRow = F,
+          labCol = F, key = T)
+legend("left",  inset = 0.05,    
+         legend = levels(as.factor(cell_types)),
+         pt.bg = unique(cell_type_cols), 
+         col = unique(cell_type_cols),
+         pch = 21, bty = "n", title = "Cell Type")
+dev.off()
+```
+
+```{r reload relevant objects}
+jdm_crosslong_nmf = readRDS('neely.jdm/NMF/results_summary/nmf_ksweep_results_compiled.rds')
+cell.types = names(jdm_crosslong_nmf)
+```
+
+```{r gene loading similarity}
+#Calculate gene loading similarity to identify highly similar programs
+gene_correlation_matrix <- Gene_similarity(NMF_results_atK)
+
+gene_similarity_node_pvals <- Permutation_test_gene_cor(Network, gene_correlation_matrix)
+
+edge_weights_fisher = abs(FisherZ(edge.attributes(Network$filtered_network)$weight*edge.attributes(Network$filtered_network)$sign))
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/gene_loading_similarity_network.pdf', height = 10, width = 10)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=colorRampPalette(c("grey", "purple"))(100)[cut(-log10(gene_similarity_node_pvals), breaks = c(0, seq(-log10(0.01), 4, length.out = 100)))],
+     edge.width=0.25, vertex.label.cex=0.5, vertex.size = 7, vertex.label.color="black", 
+     vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2, vertex.label = NA,
+     edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)],
+     main = "Gene loading similarity within module")
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "purple"))(100)), ncol=1))
+text(x=1.9, y = c(-0.4,0.4), labels = c("1e-2", "1e-4"), cex = 0.7)
+rasterImage(legend_image, 1.55, -0.45, 1.7,0.45)
+dev.off()
+```
+
+```{r gsea annotation of activity programs}
+#first need to collate scaled data from liger objects to nmf results
+#need scaled data for GSEA 
+jdm_crosslong_nmf <- lapply(cell.types, function(x){
+  nmf = jdm_crosslong_nmf[[x]]
+  liger = readRDS(paste0('updated_ksweep_01-30-23/Liger_objects/', list.files('updated_ksweep_01-30-23/Liger_objects/', pattern = x)))
+  nmf[["scale.data"]] <- liger@scale.data
+  return(nmf)
+})
+names(jdm_crosslong_nmf) = cell.types
+saveRDS(jdm_crosslong_nmf, file= 'neely.jdm/NMF/results_summary/nmf_ksweep_results_compiled.rds' ) 
+```
+
+
+```{r marker analysis and gsea run on server}
+# GSEA with GO Biological Processes 
+path_df = msigdbr(species = "Homo sapiens", category="C5")
+path_df=subset(path_df, gs_subcat%in%c("GO:BP"))
+path_list = path_df %>% split(x = .$gene_symbol, f = .$gs_name)
+
+marker_gene_list <- Marker_gene_analysis(nmf_at_k, jdm_crosslong_nmf, max.cores = 40)
+saveRDS(marker_gene_list, 'program_marker_gene_lists.rds')
+
+GO_BP_fgsea_res = fgsea_test(marker_gene_list, Network, path_list)
+saveRDS(GO_BP_fgsea_res, file = 'GOBP_fgsea_res.rds')
+```
+
+```{r export GO_BP results}
+test =  unlist(lapply(GO_BP_fgsea_res$leadingEdge, function(x) paste( unlist(x), collapse=', ')))
+gobp_gsea_df = GO_BP_fgsea_res
+gobp_gsea_df$leadingEdge = test
+gobp_gsea_df = as.data.frame(gobp_gsea_df)
+write.csv(gobp_gsea_df, '~/Library/CloudStorage/Box-Box/jdm_pbmc_model/crosslong_manuscript/Supplement/GOBP_fgsea.csv', row.names = F)
+```
+
+```{r marker analysis and gsea run on server}
+# GSEA with Hallmark terms
+path_df = msigdbr(species = "Homo sapiens", category="H")
+path_list = path_df %>% split(x = .$gene_symbol, f = .$gs_name)
+Hallmark_fgsea_res = fgsea_test(marker_gene_list, Network, path_list)
+saveRDS(Hallmark_fgsea_res, files = 'Hallmark_fgsea_res.rds')
+```
+
+```{r reformat and filter gsea results}
+#Filter and compile gsea results
+GO_BP_fgsea_res <- readRDS('neely.jdm/NMF/DECIPHER_outputs/GOBP_fgsea_res.rds')
+gobp_fgsea_list <- split(GO_BP_fgsea_res, GO_BP_fgsea_res$module)
+gobp_sig_list <- lapply(gobp_fgsea_list, function(x){
+  y <- x[x$fdr<0.01,]
+  y <- y[order(-NES),]})
+saveRDS(gobp_sig_list, file = 'neely.jdm/NMF/DECIPHER_outputs/network_gobp_fgsea_sig.rds')
+marker_gene_list = readRDS('neely.jdm/NMF/DECIPHER_outputs/program_marker_gene_lists.rds')
+```
+
+```{r reload gobps + markers}
+gobp_sig_list = readRDS('neely.jdm/NMF/DECIPHER_outputs/network_gobp_fgsea_sig.rds')
+program_markers = readRDS('neely.jdm/NMF/DECIPHER_outputs/program_marker_gene_lists.rds')
+GO_BP_fgsea_res = readRDS('neely.jdm/NMF/DECIPHER_outputs/GOBP_fgsea_res.rds')
+```
+
+```{r enrichment within modules}
+#Run module enrichment method - calculate p-values for uniqueness of gene set to given module
+sets_to_test = rbind(GO_BP_fgsea_res, Hallmark_fgsea_res)
+enrichment_pval = Get_enrichment_pvals(sets_to_test, Network, nreps = 10000)
+module_enrichment = readRDS('neely.jdm/NMF/DECIPHER_outputs/module_enrichment_pval.rds')
+gsea_pvals = list.rbind(module_enrichment)
+gsea_pvals = cbind(gsea_pvals, gene_set = rownames(gsea_pvals))
+gsea_pvals = unnest(as_tibble(gsea_pvals))
+gsea_pvals %>% mutate(across(gene_set, factor))
+module_long <- gsea_pvals %>% gather(key = module, value = pval, Module_4:Module_3, factor_key = T)
+module_pval_sorted <- module_long %>% group_by(module) %>%
+  arrange(pval, .by_group = T)
+module_pvals <- module_pval_sorted %>% split(f = .$module)
+saveRDS(module_pvals, file = 'neely.jdm/NMF/DECIPHER_outputs/module_pvals_sorted.rds')
+```
+
+```{r export sorted module enrichment}
+#Use openxlsx package to export sorted module enrichment pvals to excel workbook, results for each module on own sheet in workbook
+write.xlsx(module_pvals_sorted, file = 'jdm_pbmc_model/crosslong_manuscript/Supplement/sup_table_module_enrichment_pvals.xlsx')
+```
+
+```{r export program markers}
+#Use openxlsx package to export program markers to excel workbook, results for each cell type on own sheet in workbook
+program_markers_labelled <- lapply(program_markers, function(X){
+  cbind(genes = rownames(X), X)
+})
+openxlsx::write.xlsx(program_markers_labelled, file = '~/Library/CloudStorage/Box-Box/jdm_pbmc_model/crosslong_manuscript/Supplement/sup_table_program_markers.xlsx')
+```
+
+```{r metadata assoc - case-control}
+#Quantify association between programs and disease state (HC vs JDM)
+unique(sc_metadata$case_control)
+sc_metadata$case_control <- factor(sc_metadata$case_control, levels = c('JDM', 'HC')) #imbalanced groups, need larger group to be first level, otherwise effect size signs are backwards 
+case_ctrl = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'binary', feature.to.test = 'case_control')
+saveRDS(case_ctrl, 'neely.jdm/NMF/DECIPHER_outputs/case_control_ttest.rds')
+```
+
+```{r plot case-control assoc}
+#custom plotting:
+feature_effect_size = case_ctrl[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size",])*as.numeric(feature_effect_size["effect_size_sign",]) 
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_case_control_associations_ttest.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("blue", "red"))(100)[cut(node_val, breaks = seq(-3, 3, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'Case-Control')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("blue", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("-1", "1"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.75, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+dev.off()
+```
+
+```{r metadata assoc - updated disease activity categories (4 levels)}
+#Quantify association between programs and disease state (HC, TN JDM, Active JDM, Inactive JDM)
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+expression_scores = readRDS('neely.jdm/NMF/DECIPHER_outputs/expression_scores.rds')
+sc_metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/jdm_crosslong_meta.rds')
+sc_metadata$disease_group = sc_metadata$study_id_visit
+sc_metadata$disease_group = plyr::mapvalues(sc_metadata$disease_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups, warn_missing = F)
+unique(sc_metadata$disease_group)
+sc_metadata$disease_group = factor(sc_metadata$disease_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+saveRDS(sc_metadata, file = 'neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+
+sc_metadata <- readRDS('neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+unique(sc_metadata$disease_group)
+colnames(sc_metadata)[which(colnames(sc_metadata) == 'study_id_visit')] = 'Sample'
+da_assoc = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'categorical>2', feature.to.test = 'disease_group')
+names(da_assoc) = c('res', 'pairwise_comp')
+saveRDS(da_assoc, file = 'neely.jdm/NMF/DECIPHER_outputs/disease_activity_anova.rds')
+```
+
+```{r plot new disease state associations}
+#custom plotting:
+feature_effect_size = da_assoc$res[,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size-eta^2",])*as.numeric(feature_effect_size["effect_size_sign",])
+node_val[node_val<0] = 0 #negative eta^2 is meaningless - H metric < n groups
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_new_disease_group_associations_anova.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("grey", "red"))(100)[cut(node_val, breaks = seq(0, 1, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'Disease Group')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+dev.off()
+
+```
+
+```{r metadata assoc - med use}
+#Quantify association between programs and disease state (On vs off meds)
+sc_metadata$on_meds = sc_metadata$Sample
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+sc_metadata$on_meds = plyr::mapvalues(sc_metadata$on_meds, from = metadata$study_id_visit, to = metadata$on_meds, warn_missing = F)
+
+sc_metadata$on_meds <- factor(sc_metadata$on_meds, levels = c('no', 'yes')) #imbalanced groups, need larger group to be first level, otherwise effect size signs are backwards 
+med_use = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'binary', feature.to.test = 'on_meds')
+```
+
+```{r plot med use assoc}
+#custom plotting:
+feature_effect_size = med_use[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size",])*as.numeric(feature_effect_size["effect_size_sign",]) 
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_med_use_associations_ttest.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("blue", "red"))(100)[cut(node_val, breaks = seq(-3, 3, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'Medication Use')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("blue", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("-1", "1"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.75, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+dev.off()
+```
+
+```{r metadata assoc - MSA status}
+#Quantify association between programs and MSA status
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+metadata <- metadata %>% mutate(MSA = ifelse(is.na(MSA), new_diseasegroups, MSA))
+sc_metadata$MSA = plyr::mapvalues(sc_metadata$study_id_visit, from = metadata$study_id_visit, to = metadata$MSA, warn_missing = F)
+
+sc_metadata$MSA <- factor(sc_metadata$MSA, levels = c('NXP2', 'TIF1y', 'MDA5', 'NEG', 'UNK', 'HC')) 
+colnames(sc_metadata)[which(colnames(sc_metadata) == 'study_id_visit')] = 'Sample'
+
+msa_assoc = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'categorical>2', feature.to.test = 'MSA')
+
+names(msa_assoc) = c('res', 'pairwise_comp')
+saveRDS(msa_assoc, file = 'neely.jdm/NMF/DECIPHER_outputs/MSA_anova.rds')
+```
+
+
+```{r plot msa assoc}
+#custom plotting:
+feature_effect_size = msa_assoc[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size-eta^2",])*as.numeric(feature_effect_size["effect_size_sign",]) 
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_MSA_associations_anova.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("grey", "red"))(100)[cut(node_val, breaks = seq(0, 1, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'MSA Status')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+dev.off()
+```
+```{r metadata analysis, subset out JDM patients with known MSA}
+#custom meta-analysis - just JDM patients with known MSA status
+feature.to.test = 'MSA'
+levels = c('MDA5', 'NXP2', 'TIF1y')
+Calculate_metadata_associations_subset <- function(Network, Expression_score, metadata, feature.to.test = NULL, levels, type = c("binary", "continuous", 'categorical>2'), filtered = TRUE){
+  require(rstatix)
+  if (is.null(feature.to.test)){
+    stop("Choose metadata feature to test")
+  } else if (feature.to.test %ni% colnames(metadata)){
+    stop("feature.to.test must be a column of the input metadata file")
+  }
+  if('Sample' %ni% colnames(metadata)){
+    stop('Sample must be a column of the input metadata file')
+  }
+  H.score.comb = list.cbind(Expression_score)
+  H.score.comb$feature.to.test = rownames(H.score.comb)
+  H.score.comb$feature.to.test = plyr::mapvalues(H.score.comb$feature.to.test, from = metadata$Sample, to = as.character(metadata[,feature.to.test]), warn_missing = F)
+  metadata_sub = subset(metadata, subset = metadata[,feature.to.test] %in% levels)
+  H.score.comb = subset(H.score.comb, subset = H.score.comb[, "feature.to.test"] %in% levels)
+  colnames(H.score.comb) = gsub('-', '_', colnames(H.score.comb))
+  if(filtered == TRUE){
+    res = data.frame(matrix(nrow = 3, ncol = length(Network$filtered_modules)))
+    colnames(res) = names(Network$filtered_modules)
+  } else{
+    res = data.frame(matrix(nrow = 3, ncol = length(Network$network)))
+    colnames(res) = names(V(Network$network))}
+  colnames(res) = gsub('-', '_', colnames(res))
+  # Binary variable
+  if (type == "binary"){
+    if (length(levels(factor(H.score.comb$feature.to.test)))>2){
+      stop("Create new metadata column with two levels or select categorical>2 type")
+    }
+    test_conditions = levels(factor(metadata_sub[,feature.to.test]))
+    group1 = unique(metadata_sub[which(metadata_sub[,feature.to.test]==test_conditions[1]),]$Sample)
+    group2 = unique(metadata_sub[which(metadata_sub[,feature.to.test]==test_conditions[2]),]$Sample)
+    
+    rownames(res) = c("effect_size", "effect_size_sign", "p_value")
+    if(filtered == TRUE){
+      for (i in colnames(res)){
+        res[c("effect_size"),i] = as.numeric(t_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")),
+                                                            ref.group = 'TNJDM', detailed = T)$estimate)
+        res[c("effect_size_sign", "p_value"),i] = as.numeric(t_test(data = H.score.comb, as.formula(paste0(i, "~", "feature.to.test")),
+                                                                         ref.group = 'TNJDM', detailed = T)[,c("estimate", "p")])}
+    res["effect_size_sign",][res["effect_size_sign",]>0] = 1
+    res["effect_size_sign",][res["effect_size_sign",]<0] = -1
+    } else{
+      for (i in colnames(res)){
+        res[c("effect_size"),i] = as.numeric(wilcox_effsize(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$effsize)
+        res[c("effect_size_sign", "p_value"),i] = as.numeric(wilcox.test(as.formula(paste0(i, "~", "feature.to.test")), data = H.score.comb,alternative = "two.sided", conf.int = T)[c("statistic", "p.value")])
+      }
+      res["effect_size_sign",][res["effect_size_sign",]>0] = 1
+      res["effect_size_sign",][res["effect_size_sign",]<0] = -1
+    }
+    res[c("effect_size"),] = abs(res[c("effect_size"),])
+    out = list(res)
+  } else if (type == "categorical>2"){
+    # categorical variable with more than 2 groups
+    if (length(levels(factor(H.score.comb$feature.to.test)))<=2){
+      stop("2 or less levels detected for feature. Select binary type")
+    } 
+    rownames(res) = c("effect_size-eta^2", "effect_size_sign", "p_value")
+    pairwise_comp = list()
+    if(filtered == TRUE){
+      for (i in colnames(res)){
+        res[c("effect_size-eta^2"),i] = as.numeric(rstatix::kruskal_effsize(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$effsize)
+        res[c("p_value"),i] = as.numeric(rstatix::kruskal_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$p)
+        pairwise_comp[[i]] <- dunn_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")), p.adjust.method = "BH")
+      }
+      res["effect_size_sign",][res["effect_size-eta^2",]>0] = 1
+      res["effect_size_sign",][res["effect_size-eta^2",]<0] = -1
+    }else{
+      for (i in colnames(res)){
+          res[c("effect_size-eta^2"),i] = as.numeric(rstatix::kruskal_effsize(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$effsize)
+          res[c("p_value"),i] = as.numeric(rstatix::kruskal_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$p)
+          pairwise_comp[[i]] <- dunn_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")), p.adjust.method = "BH")
+      }
+      res["effect_size_sign",][res["effect_size-eta^2",]>0] = 1
+      res["effect_size_sign",][res["effect_size-eta^2",]<0] = -1}
+    res[c("effect_size-eta^2"),] = abs(res[c("effect_size-eta^2"),])
+    out = list(res, pairwise_comp)
+  }
+  else if(type == "continuous"){
+    # continuous variable
+    if (class(H.score.comb$feature.to.test)!="numeric"){
+      warning("Converting metadata feature.to.test to continuous variable")
+      H.score.comb$feature.to.test = as.numeric(H.score.comb$feature.to.test)
+    } 
+    if(filtered == TRUE){
+      for (i in names(Network$filtered_modules)){
+        res[c("effect_size"),i] = cor(H.score.comb[,i], H.score.comb$feature.to.test, use = "pairwise.complete.obs")
+        res[c("p_value"),i] = summary(lm(H.score.comb[,i] ~ H.score.comb$feature.to.test))$coefficients[2,4]
+      }
+      out = list(res)
+    }
+    else{
+      for (i in names(V(Network$network))){
+        res[c("effect_size"),i] = cor(H.score.comb[,i], H.score.comb$feature.to.test, use = "pairwise.complete.obs")
+        res[c("p_value"),i] = summary(lm(H.score.comb[,i] ~ H.score.comb$feature.to.test))$coefficients[2,4]
+      }
+    }
+    res["effect_size_sign",][res["effect_size",]>0] = 1
+    res["effect_size_sign",][res["effect_size",]<0] = -1
+    res[c("effect_size"),] = abs(res[c("effect_size"),])
+    out = list(res)
+  }
+  return(out)
+}
+colnames(sc_metadata)[which(colnames(sc_metadata) == 'study_id_visit')] = 'Sample'
+
+msa_pos_meta = Calculate_metadata_associations_subset(Network, expression_scores, sc_metadata, feature.to.test = 'MSA', levels = levels, type = 'categorical>2')
+names(msa_pos_meta) <- c('res', 'pairwsie')
+saveRDS(msa_pos_meta, 'neely.jdm/NMF/DECIPHER_outputs/msa_positive_network_association_anova_results.rds')
+```
+
+```{r plot MSApos subset anova results}
+#custom plotting:
+feature_effect_size = msa_pos_meta[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size-eta^2",])*as.numeric(feature_effect_size["effect_size_sign",])
+node_val[node_val<0] = 0 #negative eta^2 is meaningless - H metric < n groups
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_MSApos_association_anova.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("grey", "red"))(100)[cut(node_val, breaks = seq(0, 1, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'MSA Status')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+dev.off()
+
+```
+
+```{r}
+#ridgeplots of module 2 DA programs - significantly lower expression in TNJDM so want to see single-cell distribution of scores per patient
+H_matrix = NMF_results_atK$Bcells$H
+metadata = sc_metadata
+covariates = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+cell_loading_ridges <- function(H_matrix, metadata, covariates, program, levels, celltype){
+  h_loadings = list()
+  h_long = list()
+  for (i in unique(metadata$Sample)){
+    h_loadings[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(metadata, Sample==i))), program]
+    h_long[[i]] = data.frame(h = h_loadings[[i]], 
+                  sample = rep(i, length(h_loadings[[i]])),
+                  group=rep(as.character(covariates[covariates$study_id_visit==i,"new_diseasegroups"],
+                  length(h_loadings[[i]]))))
+  }
+  require(forcats)
+  h_long = list.rbind(h_long)
+  h_long[,'group']= factor(h_long[,'group'], levels = levels)
+  h_long[,'num'] = as.character(h_long[,'group'])
+  j=0
+  for(i in levels){
+    h_long[,'num'][h_long[,'group'] == i] = j
+    j = j+1
+  }
+  h_long[,'num'] = as.numeric(h_long[,'num'])
+  h_long[,'sample'] = as.factor(h_long[,'sample'])
+  h_mutated = mutate(h_long, sample = fct_reorder(sample, num))
+  pdf(file = paste0('neely.jdm/NMF/DECIPHER_outputs/', celltype, program, '_cell_loadings_by_patient_densitydists.pdf'),
+      height = 20, width = 10)
+  print(ggplot(h_mutated, aes(x = h, y = sample, group = sample, fill = stat(x))) + 
+    geom_density_ridges_gradient(scale = 2, size = 0.3, rel_min_height = 0.0001) +
+    scale_fill_viridis_c(name = "H", option = "magma",  direction = -1) +
+    labs(title = paste0('Cell Loadings for Disease Activity Associated ', celltype, ' ', program), x = 'H Score', y = 'Patient') +
+    theme(plot.background = element_blank(), panel.grid.major.x = element_blank(), panel.grid.minor.x = element_blank()))
+  dev.off()
+}
+
+
+
+```
+
+```{r}
+#ridgeplots of DA programs: want to see single-cell distribution of scores per patient
+cell_loading_ridges(H_matrix, metadata = sc_metadata, covariates = covariates, levels = c('TNJDM', 'Active', 'Inactive', 'HC'), celltype = 'B', program = 'R17_Program17')
+```
+
+```{r}
+#ridgeplots of DA programs: want to see single-cell distribution of scores per patient
+H_matrix = NMF_results_atK$CD4Tcells$H
+cell_loading_ridges(H_matrix, metadata = sc_metadata, covariates = covariates, levels = c('TNJDM', 'Active', 'Inactive', 'HC'), celltype = 'CD4Tcells', program = 'R17_Program17')
+```
+
+```{r}
+#ridgeplots of DA programs: want to see single-cell distribution of scores per patient
+H_matrix = NMF_results_atK$gdT$H
+cell_loading_ridges(H_matrix, metadata = sc_metadata, covariates = covariates, levels = c('TNJDM', 'Active', 'Inactive', 'HC'), celltype = 'gdT', program = 'R15_Program4')
+```
+
+```{r}
+#ridgeplots of DA programs: want to see single-cell distribution of scores per patient
+H_matrix = NMF_results_atK$B$H
+cell_loading_ridges(H_matrix, metadata = sc_metadata, covariates = covariates, levels = c('TNJDM', 'Active', 'Inactive', 'HC'), celltype = 'Bcells', program = 'R17_Program7')
+```
+
+```{r}
+#ridgeplots of DA programs: want to see single-cell distribution of scores per patient
+H_matrix = NMF_results_atK$B$H
+cell_loading_ridges(H_matrix, metadata = sc_metadata, covariates = covariates, levels = c('TNJDM', 'Active', 'Inactive', 'HC'), celltype = 'Bcells', program = 'R17_Program9')
+```
+
+```{r}
+#ridgeplots of DA programs: want to see single-cell distribution of scores per patient
+H_matrix = NMF_results_atK$NK$H
+cell_loading_ridges(H_matrix, metadata = sc_metadata, covariates = covariates, levels = c('TNJDM', 'Active', 'Inactive', 'HC'), celltype = 'NK', program = 'R13_Program12')
+```
+
+```{r metadata analysis, subset out HC and TNJDM samples}
+#custom meta-analysis - just HC vs TNJDM
+sc_metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+feature.to.test = 'disease_group'
+meta_tnjdm_hc = subset(sc_metadata, sc_metadata[,feature.to.test] %in% levels)
+Calculate_metadata_associations_subset <- function(Network, Expression_score, metadata, feature.to.test = NULL, levels, type = c("binary", "continuous", 'categorical>2'), filtered = TRUE){
+  require(rstatix)
+  if (is.null(feature.to.test)){
+    stop("Choose metadata feature to test")
+  } else if (feature.to.test %ni% colnames(metadata)){
+    stop("feature.to.test must be a column of the input metadata file")
+  }
+  if('Sample' %ni% colnames(metadata)){
+    stop('Sample must be a column of the input metadata file')
+  }
+  H.score.comb = list.cbind(Expression_score)
+  H.score.comb$feature.to.test = rownames(H.score.comb)
+  H.score.comb$feature.to.test = plyr::mapvalues(H.score.comb$feature.to.test, from = metadata$Sample, to = as.character(metadata[,feature.to.test]), warn_missing = F)
+  metadata_sub = subset(metadata, subset = metadata[,feature.to.test] %in% levels)
+  H.score.comb = subset(H.score.comb, subset = H.score.comb[, "feature.to.test"] %in% levels)
+  colnames(H.score.comb) = gsub('-', '_', colnames(H.score.comb))
+  if(filtered == TRUE){
+    res = data.frame(matrix(nrow = 3, ncol = length(Network$filtered_modules)))
+    colnames(res) = names(Network$filtered_modules)
+  } else{
+    res = data.frame(matrix(nrow = 3, ncol = length(Network$network)))
+    colnames(res) = names(V(Network$network))}
+  colnames(res) = gsub('-', '_', colnames(res))
+  # Binary variable
+  if (type == "binary"){
+    if (length(levels(factor(H.score.comb$feature.to.test)))>2){
+      stop("Create new metadata column with two levels or select categorical>2 type")
+    }
+    test_conditions = levels(factor(metadata_sub[,feature.to.test]))
+    group1 = unique(metadata_sub[which(metadata_sub[,feature.to.test]==test_conditions[1]),]$Sample)
+    group2 = unique(metadata_sub[which(metadata_sub[,feature.to.test]==test_conditions[2]),]$Sample)
+    
+    rownames(res) = c("effect_size", "effect_size_sign", "p_value")
+    if(filtered == TRUE){
+      for (i in colnames(res)){
+        res[c("effect_size"),i] = as.numeric(t_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")),
+                                                            ref.group = 'TNJDM', detailed = T)$estimate)
+        res[c("effect_size_sign", "p_value"),i] = as.numeric(t_test(data = H.score.comb, as.formula(paste0(i, "~", "feature.to.test")),
+                                                                         ref.group = 'TNJDM', detailed = T)[,c("estimate", "p")])}
+    res["effect_size_sign",][res["effect_size_sign",]>0] = 1
+    res["effect_size_sign",][res["effect_size_sign",]<0] = -1
+    } else{
+      for (i in colnames(res)){
+        res[c("effect_size"),i] = as.numeric(wilcox_effsize(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$effsize)
+        res[c("effect_size_sign", "p_value"),i] = as.numeric(wilcox.test(as.formula(paste0(i, "~", "feature.to.test")), data = H.score.comb,alternative = "two.sided", conf.int = T)[c("statistic", "p.value")])
+      }
+      res["effect_size_sign",][res["effect_size_sign",]>0] = 1
+      res["effect_size_sign",][res["effect_size_sign",]<0] = -1
+    }
+    res[c("effect_size"),] = abs(res[c("effect_size"),])
+    out = list(res)
+  } else if (type == "categorical>2"){
+    # categorical variable with more than 2 groups
+    if (length(levels(factor(H.score.comb$feature.to.test)))<=2){
+      stop("2 or less levels detected for feature. Select binary type")
+    } 
+    rownames(res) = c("effect_size-eta^2", "effect_size_sign", "p_value")
+    pairwise_comp = list()
+    if(filtered == TRUE){
+      for (i in colnames(res)){
+        res[c("effect_size-eta^2"),i] = as.numeric(rstatix::kruskal_effsize(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$effsize)
+        res[c("p_value"),i] = as.numeric(rstatix::kruskal_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$p)
+        pairwise_comp[[i]] <- dunn_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")), p.adjust.method = "BH")
+      }
+      res["effect_size_sign",][res["effect_size-eta^2",]>0] = 1
+      res["effect_size_sign",][res["effect_size-eta^2",]<0] = -1
+    }else{
+      for (i in colnames(res)){
+          res[c("effect_size-eta^2"),i] = as.numeric(rstatix::kruskal_effsize(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$effsize)
+          res[c("p_value"),i] = as.numeric(rstatix::kruskal_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")))$p)
+          pairwise_comp[[i]] <- dunn_test(H.score.comb, as.formula(paste0(i, "~", "feature.to.test")), p.adjust.method = "BH")
+      }
+      res["effect_size_sign",][res["effect_size-eta^2",]>0] = 1
+      res["effect_size_sign",][res["effect_size-eta^2",]<0] = -1}
+    res[c("effect_size-eta^2"),] = abs(res[c("effect_size-eta^2"),])
+    out = list(res, pairwise_comp)
+  }
+  else if(type == "continuous"){
+    # continuous variable
+    if (class(H.score.comb$feature.to.test)!="numeric"){
+      warning("Converting metadata feature.to.test to continuous variable")
+      H.score.comb$feature.to.test = as.numeric(H.score.comb$feature.to.test)
+    } 
+    if(filtered == TRUE){
+      for (i in names(Network$filtered_modules)){
+        res[c("effect_size"),i] = cor(H.score.comb[,i], H.score.comb$feature.to.test, use = "pairwise.complete.obs")
+        res[c("p_value"),i] = summary(lm(H.score.comb[,i] ~ H.score.comb$feature.to.test))$coefficients[2,4]
+      }
+      out = list(res)
+    }
+    else{
+      for (i in names(V(Network$network))){
+        res[c("effect_size"),i] = cor(H.score.comb[,i], H.score.comb$feature.to.test, use = "pairwise.complete.obs")
+        res[c("p_value"),i] = summary(lm(H.score.comb[,i] ~ H.score.comb$feature.to.test))$coefficients[2,4]
+      }
+    }
+    res["effect_size_sign",][res["effect_size",]>0] = 1
+    res["effect_size_sign",][res["effect_size",]<0] = -1
+    res[c("effect_size"),] = abs(res[c("effect_size"),])
+    out = list(res)
+  }
+  return(out)
+}
+colnames(sc_metadata)[which(colnames(sc_metadata) == 'study_id_visit')] = 'Sample'
+
+tnjdm_hc_meta = Calculate_metadata_associations_subset(Network, expression_scores, sc_metadata, feature.to.test = 'disease_group', levels = c('TNJDM', 'HC'), type = 'binary')
+tnjdm_hc_meta = tnjdm_hc_meta[[1]]
+```
+
+```{r plot tnjdm vs hc}
+#custom plotting:
+feature_effect_size = tnjdm_hc_meta
+node_val = as.numeric(feature_effect_size["effect_size",])*as.numeric(feature_effect_size["effect_size_sign",])
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_TNJDMvHC_associations.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("blue", "red"))(100)[cut(node_val, breaks = seq(min(node_val), max(node_val), length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'TNJDM vs HC')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("blue", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+dev.off()
+
+```
+
+
+```{r generate dotplot comparing GO terms enriched in modules via clusterProfiler}
+library(clusterProfiler)
+library(DOSE)
+dotplot_modules = function(module){
+  module[,'Cluster'] = module[,'Program']
+  module[,'Cluster'] = paste0(unlist(module[,'Type']),'.', unlist(module$Program))
+  colnames(module) = c('Description', 'pvalue', 'p.adjust', 'log2err', 'ES', 'GeneRatio', 'Count', 'geneID', 'Program', 'Type', 'module', 'fdr', 'Cluster')
+  keep = which(module[,'GeneRatio'] > 0 & module[,'fdr'] <0.01 & module$Cluster %in% names(Network$filtered_modules))
+  module = module[keep,]
+  module[,'ID'] = module[,'Description']
+  module[,'Description'] = gsub('^GOBP_', '', unlist(module[,'Description']))
+  module[,'Description'] = gsub('_', ' ', unlist(module[,'Description']))
+  module_cluster = new("compareClusterResult", compareClusterResult = module)
+  pdf(paste0('neely.jdm/NMF/DECIPHER_outputs/module', module[1, 'module'], '_gsea_dotplot.pdf'), height = 14, width = 10)
+  print(dotplot(module_cluster, label_format = 50, color = 'fdr', size = 'count', x = 'Cluster', showCategory = 5, font.size = 8) +
+    theme(axis.text.x = element_text(angle = 90)) +
+    xlab(paste0('Module ', module[1, 'module'])))
+  dev.off()
+  return(NULL)
+}
+lapply(gobp_sig_list, dotplot_modules)
+```
+
+```{r dotplot for module 1 terms of interest: gdT4, CD4T10, NK12, BP9}
+library(clusterProfiler)
+module = gobp_sig_list$`1`
+module[,'Cluster'] = module[,'Program']
+module[,'Cluster'] = paste0(unlist(module[,'Type']),'.', unlist(module$Program))
+colnames(module) = c('Description', 'pvalue', 'p.adjust', 'log2err', 'ES', 'GeneRatio', 'Count', 'geneID', 'Program', 'Type', 'module', 'fdr', 'Cluster')
+keep = which(module[,'GeneRatio'] > 0 & module[,'fdr'] <0.01 & module$Cluster %in% c('gdT.R15_Program4', 'CD4Tcells.R17_Program10', 'NK.R13_Program12', 'Bcells.R17_Program9'))
+module = module[keep,]
+module[,'ID'] = module[,'Description']
+module[,'Description'] = gsub('^GOBP_', '', unlist(module[,'Description']))
+module[,'Description'] = gsub('_', ' ', unlist(module[,'Description']))
+module_cluster = new("compareClusterResult", compareClusterResult = module)
+pdf('neely.jdm/NMF/DECIPHER_outputs/module1_4spokes_gsea_dotplot.pdf', height = 16, width = 10)
+dotplot(module_cluster, label_format = 40, color = 'fdr', size = 'count', x = 'Cluster', showCategory = 10, font.size = 12) +
+    theme(axis.text.x = element_text(angle = 90)) +
+    xlab(paste0('Module ', module[1, 'module']))
+  dev.off()
+```
+
+```{r heatmap for DA programs of CD4T cells and B cells (separate) - highlight top 10 markers of each}
+#Pearson correlation between the expression score of the indicated activity programs and the normalized expression of marker genes across cells.
+library(tidyr)
+#collect H loadings
+h_sub = list()
+programs = list()
+h_sub$CD4T = NMF_results_atK$CD4Tcells$H
+h_sub$B = NMF_results_atK$Bcells$H
+sig_da = da_assoc$res[,which(da_assoc$res['p_value',]<0.05)]
+sig_da = sig_da[,grep('Bcells|CD4Tcells', colnames(sig_da))] %>% colnames
+programs$CD4T = grep('^CD4Tcells', sig_da, value = T) %>% gsub(pattern = '^CD4Tcells\\.', replacement = '')
+programs$B = grep('^Bcells', sig_da, value = T) %>% gsub(pattern = '^Bcells\\.', replacement = '')
+#customize list for B: include B5 and B14 instead of B1 and B2
+programs$B[2] = 'R17_Program5'
+programs$B[5] = 'R17_Program14'
+programs$B = c(programs$B[2:5], 'R17_Program17')
+
+h_sub$CD4T = h_sub$CD4T[, colnames(h_sub$CD4T) %in% programs$CD4T]
+h_sub$B = h_sub$B[, colnames(h_sub$B) %in% programs$B]
+h_sub = lapply(h_sub, function(x){
+  t <- as_tibble(x)
+  t[,'cellid'] <- rownames(x)
+  return(t)
+})
+
+seu = readRDS('neely.jdm/crosslong_02SEP21/Objects/sobj_final.rds')
+Idents(seu) = seu@meta.data$rough_annotation
+types = 'B cells'
+top10 = mapply(function(x, y) {
+  temp <- sapply(y, FUN = function(p){
+    x[,'genes'] = rownames(x)
+    sorted = as_tibble(x) %>% dplyr::arrange(desc(.data[[p]]), .by_group = F)
+    sorted[1:10, 'genes']})
+  names(temp) <- y
+  list.cbind(temp)
+  }, x = program_markers['Bcells'], y = programs, SIMPLIFY = F)
+names(top10) = types
+genes_mutated = lapply(top10, function(x){
+  gather(as.data.frame(x), key = program, value = gene)
+})
+
+cells=subset(seu, idents = types[1])
+cd4t_top10_expression = FetchData(cells, vars = genes_mutated$`CD4 T cells`$gene)
+cd4t_tidy = as_tibble(cd4t_top10_expression)
+cd4t_tidy[,'cellid'] <- rownames(cd4t_top10_expression)
+rm(cd4t_top10_expression)
+cd4t_input_cells = cd4t_tidy %>% left_join(h_sub$CD4T, by = 'cellid')
+cd4t_gxp_cor = cd4t_input_cells %>% select(!cellid) %>% cor.m.boot.test
+cd4t_gxp_cor$sig.cor = cd4t_gxp_cor$cor
+cd4t_gxp_cor$sig.cor[which(cd4t_gxp_cor$p> 0.05)] = NA
+cd4t_gxp_cor$sig.cor = cd4t_gxp_cor$sig.cor[, programs$CD4T]
+cd4t_gxp_cor$sig.cor = cd4t_gxp_cor$sig.cor[rownames(cd4t_gxp_cor$sig.cor) %ni% programs$CD4T,]
+cd4t_gxp_mat <- as.matrix(cd4t_gxp_cor$sig.cor)
+cd4t_gxp_mat[is.na(cd4t_gxp_mat)] <- 0
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/cd4t_da_gxp_cor_heatmap.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(cd4t_gxp_mat), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(-1,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(9,9), 
+          Rowv = NULL, Colv = 'Rowv', dendrogram = 'none',
+          labRow = rownames(cd4t_gxp_mat),
+          labCol = colnames(cd4t_gxp_mat), key = T, revC = T)
+dev.off()
+
+cells=subset(seu, idents = types)
+b_top10_expression = FetchData(cells, vars = genes_mutated$`B cells`$gene)
+b_tidy = as_tibble(b_top10_expression)
+b_tidy[, 'cellid'] <- rownames(b_top10_expression)
+rm(b_top10_expression)
+b_input_cells = b_tidy %>% left_join(h_sub$B, by = 'cellid')
+b_gxp_cor = b_input_cells %>% select(!cellid) %>% cor.m.boot.test
+b_gxp_cor$sig.cor = b_gxp_cor$cor
+b_gxp_cor$sig.cor[which(b_gxp_cor$p> 0.05)] = NA
+b_gxp_cor$sig.cor = b_gxp_cor$sig.cor[, programs$B]
+b_gxp_cor$sig.cor = b_gxp_cor$sig.cor[rownames(b_gxp_cor$sig.cor) %ni% programs$B,]
+b_gxp_mat <- as.matrix(b_gxp_cor$sig.cor)
+b_gxp_mat[is.na(b_gxp_mat)] <- 0
+```
+```{r}
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/b_da_gxp_cor_heatmap.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(b_gxp_mat), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(-1,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(9,9), 
+          Rowv = NULL, Colv = 'Rowv', dendrogram = 'none',
+          labRow = rownames(b_gxp_mat),
+          labCol = colnames(b_gxp_mat), key = T, revC = T)
+dev.off()
+```
+
+```{r heatmap for DA programs of NK cells}
+#Pearson correlation between the expression score of the indicated activity programs and the normalized expression of marker genes across cells.
+library(tidyr)
+#collect H loadings
+h_sub = list()
+programs = list()
+h_sub$NK = NMF_results_atK$NK$H
+sig_da = da_assoc$res[,which(da_assoc$res['p_value',]<0.05)]
+sig_da = sig_da[,grep('NK', colnames(sig_da))] %>% colnames
+programs$NK = grep('^NK', sig_da, value = T) %>% gsub(pattern = '^NK\\.', replacement = '')
+
+h_sub$NK = h_sub$NK[, colnames(h_sub$NK) %in% programs$NK]
+h_sub = lapply(h_sub, function(x){
+  t <- as_tibble(x)
+  t[,'cellid'] <- rownames(x)
+  return(t)
+})
+
+seu = readRDS('neely.jdm/crosslong_02SEP21/Objects/sobj_final.rds')
+Idents(seu) = seu@meta.data$rough_annotation
+types = c('NK')
+top10 = mapply(function(x, y) {
+  temp <- sapply(y, FUN = function(p){
+    x[,'genes'] = rownames(x)
+    sorted = as_tibble(x) %>% dplyr::arrange(desc(.data[[p]]), .by_group = F)
+    sorted[1:10, 'genes']})
+  names(temp) <- y
+  list.cbind(temp)
+  }, x = program_markers[c('NK')], y = programs, SIMPLIFY = F)
+
+names(top10) = types
+genes_mutated = lapply(top10, function(x){
+  gather(as.data.frame(x), key = program, value = gene)
+})
+
+cells=subset(seu, idents = 'NK')
+NK_top10_expression = FetchData(cells, vars = genes_mutated$`NK`$gene)
+NK_tidy = as_tibble(NK_top10_expression)
+NK_tidy[,'cellid'] <- rownames(NK_top10_expression)
+rm(NK_top10_expression)
+NK_input_cells = NK_tidy %>% left_join(h_sub$NK, by = 'cellid')
+NK_gxp_cor = NK_input_cells %>% select(!cellid) %>% cor.m.boot.test
+NK_gxp_cor$sig.cor = NK_gxp_cor$cor
+NK_gxp_cor$sig.cor[which(NK_gxp_cor$p> 0.05)] = NA
+NK_gxp_cor$sig.cor = NK_gxp_cor$sig.cor[, programs$NK]
+NK_gxp_cor$sig.cor = NK_gxp_cor$sig.cor[rownames(NK_gxp_cor$sig.cor) %ni% programs$NK,]
+saveRDS(NK_gxp_cor, file = 'neely.jdm/NMF/DECIPHER_outputs/nk_da_gxp_cor.rds')
+NK_gxp_mat <- as.matrix(NK_gxp_cor$sig.cor)
+NK_gxp_mat[is.na(NK_gxp_mat)] <- 0
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/NK_da_gxp_cor_heatmap.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(NK_gxp_mat), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(-1,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(9,9), 
+          Rowv = NULL, Colv = 'Rowv', dendrogram = 'none',
+          labRow = rownames(NK_gxp_mat),
+          labCol = colnames(NK_gxp_mat), key = T, revC = T)
+dev.off()
+
+
+```
+
+```{r heatmap for DA programs of gdt cells}
+#Pearson correlation between the expression score of the indicated activity programs and the normalized expression of marker genes across cells.
+library(tidyr)
+#collect H loadings
+h_sub = list()
+programs = list()
+h_sub$gdT = NMF_results_atK$gdT$H
+sig_da = da_assoc$res[,which(da_assoc$res['p_value',]<0.05)]
+sig_da = sig_da[,grep('gdT', colnames(sig_da))] %>% colnames
+programs$gdT = grep('^gdT', sig_da, value = T) %>% gsub(pattern = '^gdT\\.', replacement = '')
+programs$gdT = c(programs$gdT[2:3], programs$gdT[5], programs$gdT[7])
+
+h_sub$gdT = h_sub$gdT[, colnames(h_sub$gdT) %in% programs$gdT]
+h_sub = lapply(h_sub, function(x){
+  t <- as_tibble(x)
+  t[,'cellid'] <- rownames(x)
+  return(t)
+})
+
+seu = readRDS('neely.jdm/crosslong_02SEP21/Objects/sobj_final.rds')
+Idents(seu) = seu@meta.data$rough_annotation
+types = c('gdT')
+top10 = mapply(function(x, y) {
+  temp <- sapply(y, FUN = function(p){
+    x[,'genes'] = rownames(x)
+    sorted = as_tibble(x) %>% dplyr::arrange(desc(.data[[p]]), .by_group = F)
+    sorted[1:10, 'genes']})
+  names(temp) <- y
+  list.cbind(temp)
+  }, x = program_markers[c('gdT')], y = programs, SIMPLIFY = F)
+
+names(top10) = types
+genes_mutated = lapply(top10, function(x){
+  gather(as.data.frame(x), key = program, value = gene)
+})
+
+cells=subset(seu, idents = 'gdT')
+gdT_top10_expression = FetchData(cells, vars = genes_mutated$`gdT`$gene)
+gdT_tidy = as_tibble(gdT_top10_expression)
+gdT_tidy[,'cellid'] <- rownames(gdT_top10_expression)
+rm(gdT_top10_expression)
+gdT_input_cells = gdT_tidy %>% left_join(h_sub$gdT, by = 'cellid')
+gdT_gxp_cor = gdT_input_cells %>% select(!cellid) %>% cor.m.boot.test
+gdT_gxp_cor$sig.cor = gdT_gxp_cor$cor
+gdT_gxp_cor$sig.cor[which(gdT_gxp_cor$p> 0.05)] = NA
+gdT_gxp_cor$sig.cor = gdT_gxp_cor$sig.cor[, programs$gdT]
+gdT_gxp_cor$sig.cor = gdT_gxp_cor$sig.cor[rownames(gdT_gxp_cor$sig.cor) %ni% programs$gdT,]
+saveRDS(gdT_gxp_cor, file = 'neely.jdm/NMF/DECIPHER_outputs/gdT_da_gxp_cor.rds')
+gdT_gxp_mat <- as.matrix(gdT_gxp_cor$sig.cor)
+gdT_gxp_mat[is.na(gdT_gxp_mat)] <- 0
+```
+
+```{r}
+#plot results for gdT gxp heatmap
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/gdT_da_gxp_cor_heatmap.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(gdT_gxp_mat), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(-1,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(9,9), 
+          Rowv = NULL, Colv = 'Rowv', dendrogram = 'none',
+          labRow = rownames(gdT_gxp_mat),
+          labCol = colnames(gdT_gxp_mat), key = T, revC = T)
+dev.off()
+```
+
+```{r IKZF2}
+#show association of specific gene expression with program expression (marker score): IKZF2
+ikzf2_scores <- lapply(program_markers, function(x){
+  x['IKZF2', ]
+})
+ikzf2_scores <- list.cbind(ikzf2_scores)
+ikzf2_scores <- ikzf2_scores[,names(Network$filtered_modules)]
+
+#custom plotting:
+node_val = as.numeric(ikzf2_scores)
+node_val[node_val<0] = 0 #negative association here meaningless/irrelevant
+node_size = node_val %>% cut(8, labels = F)
+node_size = node_size + 2
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_IKZF2_marker_associations.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color= 'purple',
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'IKZF2')
+legend("left",  inset = 0,    
+         legend = c("1",'2', '3', '4', '5', "6", '7', '8'),
+         col = "grey", pt.cex = c(0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)*2,
+         pch = 19, bty = "n", title = "Relative Association (a.u.)")
+dev.off()
+```
+
+```{r IKZF3}
+#show association of specific gene expression with program expression (marker score): IKZF3
+ikzf3_scores <- lapply(program_markers, function(x){
+  x['IKZF3', ]
+})
+ikzf3_scores <- list.cbind(ikzf3_scores)
+ikzf3_scores <- ikzf3_scores[,names(Network$filtered_modules)]
+
+#custom plotting:
+node_val = as.numeric(ikzf3_scores)
+node_val[node_val<0] = 0 #negative association here meaningless/irrelevant
+node_size = node_val %>% cut(8, labels = F)
+node_size = node_size + 2
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_IKZF3_marker_associations.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color= 'purple',
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'ikzf3')
+legend("left",  inset = 0,    
+         legend = c("1",'2', '3', '4', '5', "6", '7', '8'),
+         col = "grey", pt.cex = c(0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)*2,
+         pch = 19, bty = "n", title = "Relative Association (a.u.)")
+dev.off()
+```
+
+```{r ITGB1}
+#show association of specific gene expression with program expression (marker score): ITGB1
+ITGB1_scores <- lapply(program_markers, function(x){
+  x['ITGB1', ]
+})
+ITGB1_scores <- list.cbind(ITGB1_scores)
+ITGB1_scores <- ITGB1_scores[,names(Network$filtered_modules)]
+
+#custom plotting:
+node_val = as.numeric(ITGB1_scores)
+node_val[node_val<0] = 0 #negative association here meaningless/irrelevant
+node_size = node_val %>% cut(8, labels = F)
+node_size = node_size + 2
+pdf('neely.jdm/NMF/DECIPHER_outputs/network_ITGB1_marker_associations.pdf', width = 10, height = 8)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color= 'purple',
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'ITGB1')
+legend("left",  inset = 0,    
+         legend = c("1",'2', '3', '4', '5', "6", '7', '8'),
+         col = "grey", pt.cex = c(0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)*2,
+         pch = 19, bty = "n", title = "Relative Association (a.u.)")
+dev.off()
+
+```
+
+
+```{r dotplot of mod enrichment results}
+module_enrichment = readRDS('neely.jdm/NMF/DECIPHER_outputs/module_enrichment_pval.rds')
+
+module_pval_sorted = readRDS('neely.jdm/NMF/DECIPHER_outputs/module_pvals_sorted.rds')
+selected = readxl::read_xlsx('~/Downloads/module_GOBP terms.xlsx', col_names = F)
+colnames(selected) = c('rank', 'GeneSet', 'Module', 'p.value')
+selected$p.value = as.numeric(selected$p.value)
+selected$rank = as.numeric(selected$rank)
+selected$GeneSet = str_replace_all(selected$GeneSet, 'GOBP_', '')
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/module_enrichment_dotplot.pdf', height = 9, width = 6)
+ggplot(data = selected, aes(x = Module, y = GeneSet, 
+                        color = p.value, size = rank)) + 
+  geom_point() +
+  scale_size_continuous(trans = 'reverse')+
+  scale_color_gradient(low = "red", high = "blue", trans = "log", 
+                       breaks =  c(0.00001, 0.0001,0.001,0.01,0.1), limits = c(0.00001,0.1)) +
+  scale_y_discrete(labels = function(y) str_wrap(str_replace_all(y, "_" , " "),
+                                                 width = 20)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ylab("") + 
+  xlab("") + 
+  ggtitle("Module enrichment analysis")
+dev.off()
+```
+
+```{r boxplot function}
+#define plotting function for boxplots of DA/C-C programs
+assoc_boxplots <- function(expression_scores, celltype, program, metadata){
+  h_scores = data.frame(h_score = expression_scores[[celltype]][,program], sample = rownames(expression_scores[[celltype]]))
+  h_scores$dis_group = h_scores$sample
+  h_scores$dis_group = plyr::mapvalues(h_scores$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+  h_scores$dis_group = factor(h_scores$dis_group, levels = c('HC', 'Inactive', 'Active','TNJDM'))
+  pdf(file = paste0('neely.jdm/NMF/DECIPHER_outputs/', celltype, program, '_scores_boxplot.pdf'), height = 10, width = 10)
+  print(ggplot(data = h_scores, aes(x = dis_group, y = h_score, color = dis_group)) +
+    geom_boxplot(outlier.shape = NA) +
+    geom_jitter() +
+    theme_classic() +
+    theme(legend.position = 'none'))
+  dev.off()
+}
+```
+
+```{r boxplots for DA in module 2}
+colnames(da_assoc$res) == names(Network$filtered_modules)
+da_assoc$res['module',] = Network$filtered_modules
+da_plotting <- da_assoc$res[,which(da_assoc$res['p_value',]<0.05 & da_assoc$res['module',] == '2')]
+da_plotting <- colnames(da_plotting)
+lapply(da_plotting, function(x){
+  celltype = regmatches(x, regexpr('\\w+\\.', x))
+  celltype = gsub('\\.', '', celltype)
+  program = regmatches(x, regexpr('\\.\\w+', x))
+  program = gsub('\\.', '', program)
+  assoc_boxplots(expression_scores = expression_scores, program = program, celltype = celltype, metadata = covariates)
+  return(NULL)
+})
+```
+
+```{r boxplots for DA in module 5}
+da_plotting <- da_assoc$res[,which(da_assoc$res['p_value',]<0.05 & da_assoc$res['module',] == '5')]
+da_plotting <- colnames(da_plotting)
+lapply(da_plotting, function(x){
+  celltype = regmatches(x, regexpr('\\w+\\.', x))
+  celltype = gsub('\\.', '', celltype)
+  program = regmatches(x, regexpr('\\.\\w+', x))
+  program = gsub('\\.', '', program)
+  assoc_boxplots(expression_scores = expression_scores, program = program, celltype = celltype, metadata = covariates)
+  return(NULL)
+})
+```
+
+```{r boxplots for DA in module 1}
+da_plotting <- da_assoc$res[,which(da_assoc$res['p_value',]<0.05 & da_assoc$res['module',] == '1')]
+da_plotting <- colnames(da_plotting)
+lapply(da_plotting, function(x){
+  celltype = regmatches(x, regexpr('\\w+\\.', x))
+  celltype = gsub('\\.', '', celltype)
+  program = regmatches(x, regexpr('\\.\\w+', x))
+  program = gsub('\\.', '', program)
+  assoc_boxplots(expression_scores = expression_scores, program = program, celltype = celltype, metadata = covariates)
+  return(NULL)
+})
+```
+
+```{r}
+#zoom in on terms for CD4T 16 - dotplot of GSEA GO terms
+cd4t_16_gsea = gobp_sig_list$`5`[which(gobp_sig_list$`5`$Program == 'R17_Program16' & gobp_sig_list$`5`$Type == 'CD4Tcells'),]
+cd4t_16_gsea[,'Cluster'] = cd4t_16_gsea[,'Program']
+cd4t_16_gsea[,'Cluster'] = paste0(unlist(cd4t_16_gsea[,'Type']),'.', unlist(cd4t_16_gsea$Program))
+colnames(cd4t_16_gsea) = c('Description', 'pvalue', 'p.adjust', 'log2err', 'ES', 'GeneRatio', 'Count', 'geneID', 'Program', 'Type', 'module', 'fdr', 'Cluster')
+cd4t_16_gsea = cd4t_16_gsea[which(cd4t_16_gsea[,'GeneRatio'] > 0 & cd4t_16_gsea[,'fdr']<0.01),]
+cd4t_16_gsea[,'ID'] = cd4t_16_gsea[,'Description']
+cd4t_16_gsea[,'Description'] = gsub('^GOBP_', '', unlist(cd4t_16_gsea[,'Description']))
+cd4t_16_gsea[,'Description'] = gsub('_', ' ', unlist(cd4t_16_gsea[,'Description']))
+cd4t_16_gsea_cluster = new("compareClusterResult", compareClusterResult = cd4t_16_gsea)
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/CD4T16_gsea_dotplot.pdf', height = 10, width = 10)
+dotplot(cd4t_16_gsea_cluster, label_format = 50, color = 'fdr', size = 'count', x = 'GeneRatio', showCategory = 20, font.size = 8) +
+  xlab('NES')
+dev.off()
+```
+
+```{r}
+#zoom in on terms for BP1
+#BP1 GSEA dotplot
+
+bp1_gsea = gobp_sig_list$`5`[which(gobp_sig_list$`5`$Program == 'R17_Program1' & gobp_sig_list$`5`$Type == 'Bcells'),]
+bp1_gsea[,'Cluster'] = bp1_gsea[,'Program']
+bp1_gsea[,'Cluster'] = paste0(unlist(bp1_gsea[,'Type']),'.', unlist(bp1_gsea$Program))
+colnames(bp1_gsea) = c('Description', 'pvalue', 'p.adjust', 'log2err', 'ES', 'GeneRatio', 'Count', 'geneID', 'Program', 'Type', 'module', 'fdr', 'Cluster')
+bp1_gsea = bp1_gsea[which(bp1_gsea[,'GeneRatio'] > 0 & bp1_gsea[,'fdr']<0.01),]
+bp1_gsea[,'ID'] = bp1_gsea[,'Description']
+bp1_gsea[,'Description'] = gsub('^GOBP_', '', unlist(bp1_gsea[,'Description']))
+bp1_gsea[,'Description'] = gsub('_', ' ', unlist(bp1_gsea[,'Description']))
+bp1_gsea_cluster = new("compareClusterResult", compareClusterResult = bp1_gsea)
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/BP1_gsea_dotplot.pdf', height = 10, width = 10)
+dotplot(bp1_gsea_cluster, label_format = 50, color = 'fdr', size = 'count', x = 'GeneRatio', showCategory = 20, font.size = 8) +
+  xlab('NES')
+dev.off()
+```
+
+
+```{r CD4T 4}
+#CD4T 4 GSEA dotplot
+
+cd4t_4_gsea = gobp_sig_list$`5`[which(gobp_sig_list$`1`$Program == 'R17_Program4' & gobp_sig_list$`1`$Type == 'CD4Tcells'),]
+cd4t_4_gsea[,'Cluster'] = cd4t_4_gsea[,'Program']
+cd4t_4_gsea[,'Cluster'] = paste0(unlist(cd4t_4_gsea[,'Type']),'.', unlist(cd4t_4_gsea$Program))
+colnames(cd4t_4_gsea) = c('Description', 'pvalue', 'p.adjust', 'log2err', 'ES', 'GeneRatio', 'Count', 'geneID', 'Program', 'Type', 'module', 'fdr', 'Cluster')
+cd4t_4_gsea = cd4t_4_gsea[which(cd4t_4_gsea[,'GeneRatio'] > 0 & cd4t_4_gsea[,'fdr']<0.01),]
+cd4t_4_gsea[,'ID'] = cd4t_4_gsea[,'Description']
+cd4t_4_gsea[,'Description'] = gsub('^GOBP_', '', unlist(cd4t_4_gsea[,'Description']))
+cd4t_4_gsea[,'Description'] = gsub('_', ' ', unlist(cd4t_4_gsea[,'Description']))
+cd4t_4_gsea_cluster = new("compareClusterResult", compareClusterResult = cd4t_4_gsea)
+
+pdf('neely.jdm/NMF/DECIPHER_outputs/CD4T4_gsea_dotplot.pdf', height = 10, width = 10)
+dotplot(cd4t_4_gsea_cluster, label_format = 50, color = 'fdr', size = 'count', x = 'GeneRatio', showCategory = 5, font.size = 10) +
+  xlab('NES')
+dev.off()
+```
+
+
+```{r CD4T 4}
+#Look at expression of CD4T programs relative to subclusters
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/cd4t_cells_program4_wnn.umap.pdf', height = 10, width = 10)
+FeaturePlot(cd4t_seu, features = 'CD4T_Program4')
+dev.off()
+library(scCustomize)
+cd4t_seu <- SetIdent(cd4t_seu, value = cd4t_seu@meta.data$sub.cluster)
+
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/cd4t_cells_wnn.umap.pdf', height = 10, width = 10)
+DimPlot(cd4t_seu)
+dev.off()
+#CD4T Program 4 Primarily expressed by CD4T naive IfnHi cells
+
+Cluster_Highlight_Plot(cd4t_seu, cluster_name = 'CD4+ naive T IFNhi')
+Cluster_Highlight_Plot(cd4t_seu, cluster_name = 'CD4+ Tregs')
+Cluster_Highlight_Plot(cd4t_seu, cluster_name = 'CD4+ effector T')
+```
+
+```{r CD4T programs - subcluster mapping}
+#CD4T16 expression relative to Treg markers
+FeaturePlot(cd4t_seu, features = c('FOXP3', 'CTLA4', 'LGALS3', 'STAT1', 'TIGIT'))
+cd4t_seu = AddMetaData(cd4t_seu, metadata = NMF_results_atK$CD4Tcells$H[,'R17_Program16'], col.name = 'CD4T_Program16')
+
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/cd4t_cells_program16_wnn.umap.pdf', height = 10, width = 10)
+FeaturePlot(cd4t_seu, features = 'CD4T_Program16')
+dev.off()
+```
+
+```{r NK 8 and9}
+#NK cell subcluster expression of programs 
+seu = readRDS('neely.jdm/crosslong_02SEP21/Objects/sobj_final.rds')
+metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+
+seu_nk = subset(seu, subset = rough_annotation == 'NK')
+seu_nk = AddMetaData(seu_nk, metadata = NMF_results_atK$NK$H[,'R13_Program8'], col.name = 'NK_Program8')
+seu_nk = AddMetaData(seu_nk, metadata = NMF_results_atK$NK$H[,'R13_Program9'], col.name = 'NK_Program9')
+
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/NK_cells_program9_wnn.umap.pdf', height = 5, width = 10)
+FeaturePlot(seu_nk, features = c('NK_Program9', 'NK_Program8'), reduction = 'wnn.umap')
+dev.off()
+```
+```{r}
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/NK_cells_subclusters_wnn.umap.pdf', height = 8, width = 8)
+DimPlot(seu_nk, group.by = 'sub.cluster')
+dev.off()
+```
+
+
+```{r CD4T1 and CD4T10 - Th2 programs}
+#CD4T cell subcluster expression of programs - Th2 skew (CD4T1 and CD4T10)
+seu = readRDS('neely.jdm/crosslong_02SEP21/Objects/sobj_trimmed.rds')
+metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+
+#add nmf program expression as metadata to seurat objects
+seu_cd4t = subset(seu, subset = rough_annotation == 'CD4 T cells')
+seu_cd4t = AddMetaData(seu_cd4t, metadata = NMF_results_atK$CD4Tcells$H[,'R17_Program1'], col.name = 'CD4T_Program1')
+seu_cd4t = AddMetaData(seu_cd4t, metadata = NMF_results_atK$CD4Tcells$H[,'R17_Program10'], col.name = 'CD4T_Program10')
+
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/cd4t_cells_program1-10_wnn.umap.pdf', height = 5, width = 10)
+FeaturePlot(seu_cd4t, features = c('CD4T_Program1', 'CD4T_Program10'), reduction = 'wnn.umap')
+dev.off()
+```
+```{r}
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/cd4t_cells_wnnumap_subcluster_ann.pdf', height = 8, width = 8)
+DimPlot(seu_cd4t, group.by = 'sub.cluster', reduction = 'wnn.umap')
+dev.off()
+```
+
+```{r}
+pdf(file = 'jdm_pbmc_model/crosslong_manuscript/figures/plots/NK_cells_subclusters_wnn.umap.pdf', height = 8, width = 8)
+DimPlot(seu_nk, group.by = 'sub.cluster', reduction = 'wnn.umap')
+dev.off()
+```
+
+```{r associations for all CD4T cell programs, not just ones in network}
+#associations for all CD4T cell programs, not just ones in network
+NMF_results_atK = readRDS('neely.jdm/NMF/DECIPHER_outputs/jdm_crosslong_nmf_at_k.rds')
+expression_scores = readRDS('neely.jdm/NMF/DECIPHER_outputs/expression_scores.rds')
+sc_metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+colnames(sc_metadata)
+colnames(sc_metadata)[11] = 'Sample'
+cd4t_all_disease = Calculate_metadata_associations(Network, Expression_score = expression_scores$CD4Tcells, filtered = F, metadata = sc_metadata, feature.to.test = 'disease_group', type = 'categorical>2')
+names(cd4t_all_disease) = c('res', 'pairwise_comp')
+saveRDS(cd4t_all_disease, file = 'neely.jdm/NMF/DECIPHER_outputs/cd4t_all_disease_group_meta_ANOVA.rds')
+
+cd4t_all_cc = Calculate_metadata_associations(Network, Expression_score = expression_scores$CD4Tcells, filtered = F, metadata = sc_metadata, feature.to.test = 'case_control', type = 'binary')
+names(cd4t_all_cc) = c('res')
+saveRDS(cd4t_all_cc, file = 'neely.jdm/NMF/DECIPHER_outputs/cd4t_all_case-ctrl_meta_ttest.rds')
+```
+
+```{r pairwise comparisons for cd4t P4}
+#collate H cell loadings for program 4 by sample of origin
+h_loadings_cd4t4 = list()
+H_matrix = NMF_results_atK$CD4Tcells$H
+h_cd4t4_long = list()
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+for (i in unique(metadata$study_id_visit)){
+    h_loadings_cd4t4[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R17_Program14"]
+    h_cd4t4_long[[i]] = data.frame(h = h_loadings_cd4t4[[i]], sample = rep(i, length(h_loadings_cd4t4[[i]])),dis_group=rep(as.character(metadata[metadata$study_id_visit==i,"new_diseasegroups"]), length(h_loadings_cd4t4[[i]])))
+}
+
+h_cd4t4_long = list.rbind(h_cd4t4_long)
+h_cd4t4_long$dis_group= factor(h_cd4t4_long$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+h_cd4t4_long$dis_group = as.character(h_cd4t4_long$dis_group)
+library(forcats)
+h_cd4t4_long$da_num[h_cd4t4_long$dis_group == 'TNJDM'] = 3
+h_cd4t4_long$da_num[h_cd4t4_long$dis_group == 'Active'] = 2
+h_cd4t4_long$da_num[h_cd4t4_long$dis_group == 'Inactive'] = 1
+h_cd4t4_long$da_num[h_cd4t4_long$dis_group == 'HC'] = 0
+h_cd4t4_long$da_num = as.numeric(h_cd4t4_long$da_num)
+h_cd4t4_long$sample = as.factor(h_cd4t4_long$sample)
+#group so that disease groups lumped together (for ordered plotting below)
+h_cd4t4_mutated = mutate(h_cd4t4_long, sample = fct_reorder(sample, da_num))
+
+#plot ridge plot
+theme_set(theme_minimal())
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram4_cell_loadings_by_patient_densitydists.pdf', height = 20, width = 10)
+ggplot(h_cd4t4_mutated, aes(x = h, y = sample, group = sample, fill = stat(x))) + 
+  geom_density_ridges_gradient(scale = 2, size = 0.3, rel_min_height = 0.0001) +
+  scale_fill_viridis_c(name = "H", option = "magma",  direction = -1) +
+  labs(title = 'Cell Loadings for Disease Associated CD4T Program 4', x = 'Score', y = 'Patient') +
+  theme(plot.background = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank())
+dev.off()
+```
+
+```{r plot pairwise comparison results for cd4t 4}
+h_scores_cd4t4 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program4, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t4$dis_group = h_scores_cd4t4$sample
+h_scores_cd4t4$dis_group = plyr::mapvalues(h_scores_cd4t4$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+h_scores_cd4t4$dis_group = factor(h_scores_cd4t4$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram4_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t4, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 10}
+h_scores_cd4t10 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program10, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t10$dis_group = h_scores_cd4t10$sample
+h_scores_cd4t10$dis_group = plyr::mapvalues(h_scores_cd4t10$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+h_scores_cd4t10$dis_group = factor(h_scores_cd4t10$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram10_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t10, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 13}
+h_scores_cd4t13 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program13, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t13$dis_group = h_scores_cd4t13$sample
+h_scores_cd4t13$dis_group = plyr::mapvalues(h_scores_cd4t13$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+h_scores_cd4t13$dis_group = factor(h_scores_cd4t13$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram13_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t13, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 17}
+h_scores_cd4t17 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program17, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t17$dis_group = h_scores_cd4t17$sample
+h_scores_cd4t17$dis_group = plyr::mapvalues(h_scores_cd4t17$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+h_scores_cd4t17$dis_group = factor(h_scores_cd4t17$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram17_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t17, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 1}
+h_scores_cd4t1 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program1, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t1$cc = h_scores_cd4t1$sample
+h_scores_cd4t1$cc = plyr::mapvalues(h_scores_cd4t1$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t1$cc = factor(h_scores_cd4t1$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram1_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t1, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd8t 3}
+h_scores_cd8t3 = data.frame(h_score = expression_scores$CD8Tcells$R15_Program3, sample = rownames(expression_scores$CD8Tcells))
+h_scores_cd8t3$cc = h_scores_cd8t3$sample
+h_scores_cd8t3$cc = plyr::mapvalues(h_scores_cd8t3$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd8t3$cc = factor(h_scores_cd8t3$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD8TProgram3_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd8t3, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 4}
+h_scores_cd4t4 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program4, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t4$cc = h_scores_cd4t4$sample
+h_scores_cd4t4$cc = plyr::mapvalues(h_scores_cd4t4$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t4$cc = factor(h_scores_cd4t4$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram4_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t4, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 10}
+h_scores_cd4t10 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program10, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t10$cc = h_scores_cd4t10$sample
+h_scores_cd4t10$cc = plyr::mapvalues(h_scores_cd4t10$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t10$cc = factor(h_scores_cd4t10$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram10_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t10, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 11}
+h_scores_cd4t11 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program11, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t11$cc = h_scores_cd4t11$sample
+h_scores_cd4t11$cc = plyr::mapvalues(h_scores_cd4t11$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t11$cc = factor(h_scores_cd4t11$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram11_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t11, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for cd4t 13}
+h_scores_cd4t13 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program13, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t13$cc = h_scores_cd4t13$sample
+h_scores_cd4t13$cc = plyr::mapvalues(h_scores_cd4t13$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t13$cc = factor(h_scores_cd4t13$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram13_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t13, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+
+```{r plot pairwise comparison results for cd4t 17}
+h_scores_cd4t17 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program17, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t17$cc = h_scores_cd4t17$sample
+h_scores_cd4t17$cc = plyr::mapvalues(h_scores_cd4t17$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t17$cc = factor(h_scores_cd4t17$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram17_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t17, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+
+
+```{r plot pairwise comparison results for BP2}
+h_scores_bp2 = data.frame(h_score = expression_scores$Bcells$R17_Program2, sample = rownames(expression_scores$Bcells))
+h_scores_bp2$dis_group = h_scores_bp2$sample
+h_scores_bp2$dis_group = plyr::mapvalues(h_scores_bp2$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+h_scores_bp2$dis_group = factor(h_scores_bp2$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram2_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp2, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for BP17}
+h_scores_bp17 = data.frame(h_score = expression_scores$Bcells$R17_Program17, sample = rownames(expression_scores$Bcells))
+h_scores_bp17$dis_group = h_scores_bp17$sample
+h_scores_bp17$dis_group = plyr::mapvalues(h_scores_bp17$dis_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+h_scores_bp17$dis_group = factor(h_scores_bp17$dis_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram17_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp17, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for BP5}
+h_scores_bp5 = data.frame(h_score = expression_scores$Bcells$R17_Program5, sample = rownames(expression_scores$Bcells))
+h_scores_bp5$cc = h_scores_bp5$sample
+h_scores_bp5$cc = plyr::mapvalues(h_scores_bp5$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_bp5$cc = factor(h_scores_bp5$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram5_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp5, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+
+```{r plot pairwise comparison results for BP7}
+h_scores_bp7 = data.frame(h_score = expression_scores$Bcells$R17_Program7, sample = rownames(expression_scores$Bcells))
+h_scores_bp7$cc = h_scores_bp7$sample
+h_scores_bp7$cc = plyr::mapvalues(h_scores_bp7$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_bp7$cc = factor(h_scores_bp7$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram7_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp7, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for BP13}
+h_scores_bp13 = data.frame(h_score = expression_scores$Bcells$R17_Program13, sample = rownames(expression_scores$Bcells))
+h_scores_bp13$cc = h_scores_bp13$sample
+h_scores_bp13$cc = plyr::mapvalues(h_scores_bp13$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_bp13$cc = factor(h_scores_bp13$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram13_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp13, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for BP14}
+h_scores_bp14 = data.frame(h_score = expression_scores$Bcells$R17_Program14, sample = rownames(expression_scores$Bcells))
+h_scores_bp14$cc = h_scores_bp14$sample
+h_scores_bp14$cc = plyr::mapvalues(h_scores_bp14$cc, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_bp14$cc = factor(h_scores_bp14$cc, levels = c('JDM', 'HC'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram14_scores_case-ctrl_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp14, aes(x = cc, y = h_score, color = cc)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+
+```{r pairwise comparisons for BP14}
+#collate H cell loadings for program 14 by sample of origin
+h_loadings_BP14 = list()
+H_matrix = NMF_results_atK$Bcells$H
+h_bp14_long = list()
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+for (i in unique(metadata$study_id_visit)){
+    h_loadings_BP14[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R17_Program14"]
+    h_bp14_long[[i]] = data.frame(h = h_loadings_BP14[[i]], sample = rep(i, length(h_loadings_BP14[[i]])),cc=rep(as.character(metadata[metadata$study_id_visit==i,"case_control"]), length(h_loadings_BP14[[i]])))
+}
+
+h_bp14_long = list.rbind(h_bp14_long)
+h_bp14_long$cc= factor(h_bp14_long$cc, levels = c('JDM', 'HC'))
+h_bp14_long$cc_num = as.character(h_bp14_long$cc)
+library(forcats)
+h_bp14_long$cc_num[h_bp14_long$cc == 'JDM'] = 1
+h_bp14_long$cc_num[h_bp14_long$cc == 'HC'] = 0
+h_bp14_long$cc_num = as.numeric(h_bp14_long$cc_num)
+h_bp14_long$sample = as.factor(h_bp14_long$sample)
+#group so that disease groups lumped together (for ordered plotting below)
+h_bp14_mutated = mutate(h_bp14_long, sample = fct_reorder(sample, cc_num))
+```
+```{r plot}
+theme_set(theme_minimal())
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram14_cell_loadings_by_patient_densitydists.pdf', height = 20, width = 10)
+ggplot(h_bp14_mutated, aes(x = h, y = sample, group = sample, fill = stat(x))) + 
+  geom_density_ridges_gradient(scale = 2, size = 0.3, rel_min_height = 0.0001) +
+  scale_fill_viridis_c(name = "H", option = "magma",  direction = -1) +
+  labs(title = 'Cell Loadings for Disease Associated B Cell Program 14', x = 'Epigenetic Control Score', y = 'Patient') +
+  theme(plot.background = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank())
+dev.off()
+```
+```{r pairwise comparisons for CD4T Program16}
+#collate H cell loadings for program 16 by sample of origin
+h_loadings_cd4t16 = list()
+H_matrix = NMF_results_atK$CD4Tcells$H
+h_cd4t16_long = list()
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+for (i in unique(metadata$study_id_visit)){
+    h_loadings_cd4t16[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R17_Program14"]
+    h_cd4t16_long[[i]] = data.frame(h = h_loadings_cd4t16[[i]], sample = rep(i, length(h_loadings_cd4t16[[i]])),cc=rep(as.character(metadata[metadata$study_id_visit==i,"case_control"]), length(h_loadings_cd4t16[[i]])))
+}
+
+h_cd4t16_long = list.rbind(h_cd4t16_long)
+h_cd4t16_long$cc= factor(h_cd4t16_long$cc, levels = c('JDM', 'HC'))
+h_cd4t16_long$cc_num = as.character(h_cd4t16_long$cc)
+library(forcats)
+h_cd4t16_long$cc_num[h_cd4t16_long$cc == 'JDM'] = 1
+h_cd4t16_long$cc_num[h_cd4t16_long$cc == 'HC'] = 0
+h_cd4t16_long$cc_num = as.numeric(h_cd4t16_long$cc_num)
+h_cd4t16_long$sample = as.factor(h_cd4t16_long$sample)
+#group so that disease groups lumped together (for ordered plotting below)
+h_cd4t16_mutated = mutate(h_cd4t16_long, sample = fct_reorder(sample, cc_num))
+```
+```{r plot}
+theme_set(theme_minimal())
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4T16_cell_loadings_by_patient_densitydists.pdf', height = 20, width = 10)
+ggplot(h_cd4t16_mutated, aes(x = h, y = sample, group = sample, fill = stat(x))) + 
+  geom_density_ridges_gradient(scale = 2, size = 0.3, rel_min_height = 0.0001) +
+  scale_fill_viridis_c(name = "H", option = "magma",  direction = -1) +
+  labs(title = 'Cell Loadings for Disease Associated CD4T Program 16', x = 'Treg Activation Score', y = 'Patient') +
+  theme(plot.background = element_blank(), 
+        panel.grid.major.x = element_blank(), 
+        panel.grid.minor.x = element_blank())
+dev.off()
+```
+
+```{r plot pairwise comparison results for BP14}
+h_scores_bp14 = data.frame(h_score = expression_scores$Bcells$R17_Program14, sample = rownames(expression_scores$Bcells))
+h_scores_bp14$dis_group = h_scores_bp14$sample
+h_scores_bp14$dis_group = plyr::mapvalues(h_scores_bp14$dis_group, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_bp14$dis_group = factor(h_scores_bp14$dis_group, levels = c('HC', 'JDM'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BProgram14_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_bp14, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+```{r plot pairwise comparison results for CD4T16}
+h_scores_cd4t16 = data.frame(h_score = expression_scores$CD4Tcells$R17_Program16, sample = rownames(expression_scores$CD4Tcells))
+h_scores_cd4t16$dis_group = h_scores_cd4t16$sample
+h_scores_cd4t16$dis_group = plyr::mapvalues(h_scores_cd4t16$dis_group, from = metadata$study_id_visit, to = metadata$case_control)
+h_scores_cd4t16$dis_group = factor(h_scores_cd4t16$dis_group, levels = c('HC', 'JDM'  ))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/CD4TProgram16_scores_boxplot.pdf', height = 10, width = 10)
+ggplot(data = h_scores_cd4t16, aes(x = dis_group, y = h_score, color = dis_group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  theme_classic() +
+  theme(legend.position = 'none')
+dev.off()
+```
+
+
+```{r looking into BP7 and CD4T4 clustering}
+#collect single cell scores per patient
+h_loadings_BP7 = list()
+H_matrix = NMF_results_atK$Bcells$H
+h_bp7_long = list()
+for (i in unique(metadata$study_id_visit)){
+    h_loadings_BP7[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R17_Program7"]
+    h_bp7_long[[i]] = data.frame(h = h_loadings_BP7[[i]], sample = rep(i, length(h_loadings_BP7[[i]])),da=rep(as.character(metadata[metadata$study_id_visit==i,"new_diseasegroups"]), length(h_loadings_BP7[[i]])))
+}
+
+h_bp7_long = list.rbind(h_bp7_long)
+h_bp7_long$da= factor(h_bp7_long$da, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+dist_bp7 = lapply(h_loadings_BP7, function(x){
+  kernel <- stats::density(x, from = 0)
+  kernel$y/sum(kernel$y)
+})
+dist_bp7_mat = list.rbind(dist_bp7)
+jsd_mat <- philentropy::distance(dist_bp7_mat, unit = 'log2', method = 'jensen-shannon', use.row.names = T)
+#convert to distance
+jsd_mat <- sqrt(jsd_mat)
+
+bp7_dend = as.dendrogram(hclust(as.dist(jsd_mat), method = 'complete'))
+order_samples = colnames(jsd_mat)
+order_scores = as.factor(expression_scores$Bcells[order_samples, "R17_Program7"])
+avg_score_cols = hcl.colors(length(levels(order_scores)), palette = 'Purples 2', rev = T)[order_scores]
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/bp7_jsd_heatmap.pdf', height = 10, width = 10)
+heatmap.2(1-jsd_mat, trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          ColSideColors = avg_score_cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = bp7_dend, Colv = 'Rowv', dendrogram = 'column',
+          labRow = colnames(jsd_mat),
+          labCol = colnames(jsd_mat), key = T, revC = T)
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "purple"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Mean Expression"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+dev.off()
+```
+
+```{r looking into CD4T4 clustering}
+#collect single cell scores per patient
+#need to fix color spectrum assignment
+h_loadings_cd4t4 = list()
+H_matrix = NMF_results_atK$CD4Tcells$H
+h_cd4t4_long = list()
+for (i in unique(metadata$study_id_visit)){
+    h_loadings_cd4t4[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R17_Program4"]
+    h_cd4t4_long[[i]] = data.frame(h = h_loadings_cd4t4[[i]], sample = rep(i, length(h_loadings_cd4t4[[i]])),da=rep(as.character(metadata[metadata$study_id_visit==i,"new_diseasegroups"]), length(h_loadings_cd4t4[[i]])))
+}
+
+h_cd4t4_long = list.rbind(h_cd4t4_long)
+h_cd4t4_long$da= factor(h_cd4t4_long$da, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+dist_cd4t4 = lapply(h_loadings_cd4t4, function(x){
+  kernel <- stats::density(x, from = 0)
+  kernel$y/sum(kernel$y)
+})
+dist_cd4t4_mat = list.rbind(dist_cd4t4)
+jsd_mat <- philentropy::distance(dist_cd4t4_mat, unit = 'log2', method = 'jensen-shannon', use.row.names = T)
+#convert to distance
+jsd_mat <- sqrt(jsd_mat)
+
+cd4t4_dend = as.dendrogram(hclust(as.dist(jsd_mat), method = 'complete'))
+order_samples = colnames(jsd_mat)
+order_scores = as.factor(expression_scores$CD4Tcells[order_samples, "R17_Program4"])
+avg_score_cols = hcl.colors(length(levels(order_scores)), palette = 'Purples 2', rev = T)[order_scores]
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/cd4t4_jsd_heatmap.pdf', height = 10, width = 10)
+heatmap.2(1-jsd_mat, trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          ColSideColors = avg_score_cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = cd4t4_dend, Colv = 'Rowv', dendrogram = 'column',
+          labRow = colnames(jsd_mat),
+          labCol = colnames(jsd_mat), key = T, revC = T)
+dev.off()
+```
+
+```{r looking into NK12 clustering}
+#collect single cell scores per patient
+h_loadings = list()
+H_matrix = NMF_results_atK$NK$H
+h_long = list()
+for (i in unique(covariates$study_id_visit)){
+    h_loadings[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R13_Program12"]
+    h_long[[i]] = data.frame(h = h_loadings[[i]], sample = rep(i, length(h_loadings[[i]])),da=rep(as.character(metadata[covariates$study_id_visit==i,"new_diseasegroups"]), length(h_loadings[[i]])))
+}
+
+h_long = list.rbind(h_long)
+h_long$da= factor(h_long$da, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+dist= lapply(h_loadings, function(x){
+  kernel <- stats::density(x, from = 0)
+  kernel$y/sum(kernel$y)
+})
+dist_mat = list.rbind(dist)
+jsd_mat <- philentropy::distance(dist_mat, unit = 'log2', method = 'jensen-shannon', use.row.names = T)
+#convert to distance
+jsd_mat <- sqrt(jsd_mat)
+dend = as.dendrogram(hclust(as.dist(jsd_mat), method = 'complete'))
+
+order_samples = colnames(jsd_mat)
+order_scores = as.factor(expression_scores$NK[order_samples, "R13_Program12"])
+avg_score_cols = hcl.colors(length(levels(order_scores)), palette = 'Purples 2', rev = T)[order_scores]
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/NK12_jsd_heatmap.pdf', height = 10, width = 10)
+heatmap.2(1-jsd_mat, trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          ColSideColors = avg_score_cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = dend, Colv = 'Rowv', dendrogram = 'column',
+          labRow = colnames(jsd_mat),
+          labCol = colnames(jsd_mat), key = T, revC = T)
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "purple"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Mean Expression"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+dev.off()
+```
+
+```{r looking into BP9 (transitional B cells) clustering}
+#collect single cell scores per patient
+h_loadings = list()
+H_matrix = NMF_results_atK$Bcells$H
+h_long = list()
+for (i in unique(covariates$study_id_visit)){
+    h_loadings[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R17_Program9"]
+    h_long[[i]] = data.frame(h = h_loadings[[i]], sample = rep(i, length(h_loadings[[i]])),da=rep(as.character(metadata[covariates$study_id_visit==i,"new_diseasegroups"]), length(h_loadings[[i]])))
+}
+
+h_long = list.rbind(h_long)
+h_long$da= factor(h_long$da, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+dist= lapply(h_loadings, function(x){
+  kernel <- stats::density(x, from = 0)
+  kernel$y/sum(kernel$y)
+})
+dist_mat = list.rbind(dist)
+jsd_mat <- philentropy::distance(dist_mat, unit = 'log2', method = 'jensen-shannon', use.row.names = T)
+#convert to distance
+jsd_mat <- sqrt(jsd_mat)
+dend = as.dendrogram(hclust(as.dist(jsd_mat), method = 'complete'))
+
+order_samples = colnames(jsd_mat)
+order_scores = as.factor(expression_scores$Bcells[order_samples, "R17_Program9"])
+avg_score_cols = hcl.colors(length(levels(order_scores)), palette = 'Purples 2', rev = T)[order_scores]
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/BP9_jsd_heatmap.pdf', height = 10, width = 10)
+heatmap.2(1-jsd_mat, trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          ColSideColors = avg_score_cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = dend, Colv = 'Rowv', dendrogram = 'column',
+          labRow = colnames(jsd_mat),
+          labCol = colnames(jsd_mat), key = T, revC = T)
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "purple"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Mean Expression"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+dev.off()
+```
+```{r looking into gdT4 clustering}
+#collect single cell scores per patient
+h_loadings = list()
+H_matrix = NMF_results_atK$gdT$H
+h_long = list()
+for (i in unique(covariates$study_id_visit)){
+    h_loadings[[i]] = H_matrix[intersect(rownames(H_matrix), rownames(subset(sc_metadata, sc_metadata$Sample==i))), "R15_Program4"]
+    h_long[[i]] = data.frame(h = h_loadings[[i]], sample = rep(i, length(h_loadings[[i]])),da=rep(as.character(metadata[covariates$study_id_visit==i,"new_diseasegroups"]), length(h_loadings[[i]])))
+}
+
+h_long = list.rbind(h_long)
+h_long$da= factor(h_long$da, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+dist= lapply(h_loadings, function(x){
+  kernel <- stats::density(x, from = 0)
+  kernel$y/sum(kernel$y)
+})
+dist_mat = list.rbind(dist)
+jsd_mat <- philentropy::distance(dist_mat, unit = 'log2', method = 'jensen-shannon', use.row.names = T)
+#convert to distance
+jsd_mat <- sqrt(jsd_mat)
+dend = as.dendrogram(hclust(as.dist(jsd_mat), method = 'complete'))
+
+order_samples = colnames(jsd_mat)
+order_scores = as.factor(expression_scores$gdT[order_samples, "R15_Program4"])
+avg_score_cols = hcl.colors(length(levels(order_scores)), palette = 'Purples 2', rev = T)[order_scores]
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/gdT4_jsd_heatmap.pdf', height = 10, width = 10)
+heatmap.2(1-jsd_mat, trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          ColSideColors = avg_score_cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = dend, Colv = 'Rowv', dendrogram = 'column',
+          labRow = colnames(jsd_mat),
+          labCol = colnames(jsd_mat), key = T, revC = T)
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "purple"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Mean Expression"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+dev.off()
+```
+
+```{r visualize significant comparisons all together as heatmap}
+#reload metadata and expression scores
+setwd('~/Library/CloudStorage/Box-Box/')
+expression_scores = readRDS('neely.jdm/NMF/DECIPHER_outputs/expression_scores.rds')
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+
+#first preserve subject IDs by adding as column (tidy data format)
+expression_scores_tidy = sapply(expression_scores, function(x) {
+  x[, "subject_id"] = rownames(x)
+  x <- as_tibble(x)
+  return(x)})
+#verify order of subject ids preserved, ie if columns identical (FALSE = first original column - should only be 1)
+duplicated(sapply(expression_scores_tidy, function (x) x[, "subject_id"]), MARGIN = 2) #
+
+#start to collate df of interest: 
+sig_assoc_matrix = data.frame(subject_id = expression_scores_tidy$Bcells$subject_id)
+sig_assoc_matrix[, c('DA_group', 'case_ctrl')] = sig_assoc_matrix$subject_id
+sig_assoc_matrix$DA_group = plyr::mapvalues(sig_assoc_matrix$DA_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+sig_assoc_matrix$case_ctrl = plyr::mapvalues(sig_assoc_matrix$case_ctrl, from = metadata$study_id_visit, to = metadata$case_control)
+sig_assoc_matrix = as_tibble(sig_assoc_matrix) %>% arrange(factor(DA_group, levels = c('HC', 'Inactive', 'Active', 'TNJDM')))
+
+programs_to_plot = c('Bcells', 'Bcells', 'CD4Tcells', 'CD4Tcells', 'Bcells', 'CD4Tcells', 'gdT', 'NK', 'NK', 'NK')
+names(programs_to_plot) = c('R17_Program5', 'R17_Program14', 'R17_Program1', 'R17_Program17',  'R17_Program9', 'R17_Program10', 'R15_Program4', 'R13_Program12', 'R13_Program8', 'R13_Program9')
+
+for (i in names(programs_to_plot)){
+  j = programs_to_plot[i]
+  program = paste0(j, '_', i)
+  sig_assoc_matrix[program] = as.numeric(plyr::mapvalues(sig_assoc_matrix$subject_id, 
+                                                        from = expression_scores_tidy[[j]][["subject_id"]], 
+                                                        to = expression_scores_tidy[[j]][[i]]))
+  
+}
+```
+
+```{r}
+#plot as quantiles
+sig_assoc_matrix = as.data.frame(sig_assoc_matrix)
+test = sapply(sig_assoc_matrix[, 4:13], function(X) ecdf(X)(X))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/program_comparisons_heatmap', height = 10, width = 10)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = sig_assoc_matrix$DA_group,
+          labCol = colnames(sig_assoc_matrix[, 4:13]), key = T, revC = F)
+dev.off()
+
+#plot version with study_ids
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/program_comparisons_heatmap_studyIDs.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = sig_assoc_matrix$subject_id,
+          labCol = colnames(sig_assoc_matrix[, 4:13]), key = T, revC = F)
+dev.off()
+```
+
+```{r interferon programs from module 1}
+#start to collate df of interest: 
+ifn_assoc_matrix = data.frame(subject_id = expression_scores_tidy$Bcells$subject_id)
+ifn_assoc_matrix[, c('DA_group', 'case_ctrl')] = ifn_assoc_matrix$subject_id
+ifn_assoc_matrix$DA_group = plyr::mapvalues(ifn_assoc_matrix$DA_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+ifn_assoc_matrix$case_ctrl = plyr::mapvalues(ifn_assoc_matrix$case_ctrl, from = metadata$study_id_visit, to = metadata$case_control)
+ifn_assoc_matrix = as_tibble(ifn_assoc_matrix) %>% arrange(factor(DA_group, levels = c('HC', 'Inactive', 'Active', 'TNJDM')))
+
+programs_to_plot = c('Bcells', 'CD4Tcells', 'CD8Tcells', 'gdT', 'Myeloid', 'NK')
+names(programs_to_plot) = c('R17_Program7', 'R17_Program4', 'R15_Program7', 'R15_Program13',  'R17_Program17', 'R13_Program13')
+
+for (i in names(programs_to_plot)){
+  j = programs_to_plot[i]
+  program = paste0(j, '_', i)
+  ifn_assoc_matrix[program] = as.numeric(plyr::mapvalues(ifn_assoc_matrix$subject_id, 
+                                                        from = expression_scores_tidy[[j]][["subject_id"]], 
+                                                        to = expression_scores_tidy[[j]][[i]]))
+  
+}
+#plot as quantiles
+ifn_assoc_matrix = as.data.frame(ifn_assoc_matrix)
+test = sapply(ifn_assoc_matrix[, 4:9], function(X) ecdf(X)(X))
+pdf(file = '~/Library/CloudStorage/Box-Box/neely.jdm/NMF/DECIPHER_outputs/ifn_programs_heatmap.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = ifn_assoc_matrix$DA_group,
+          labCol = colnames(ifn_assoc_matrix[, 4:9]), key = T, revC = F)
+dev.off()
+
+#plot version with study_ids
+ifn_assoc_matrix = as.data.frame(ifn_assoc_matrix)
+test = sapply(ifn_assoc_matrix[, 4:9], function(X) ecdf(X)(X))
+pdf(file = '~/Library/CloudStorage/Box-Box/neely.jdm/NMF/DECIPHER_outputs/ifn_programs_heatmap_studyIDs.pdf', height = 10, width = 10)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = ifn_assoc_matrix$subject_id,
+          labCol = colnames(ifn_assoc_matrix[, 4:9]), key = T, revC = F)
+dev.off()
+```
+
+```{r reogranize heatmaps for figures}
+#collate df of interest (case control): 
+sig_assoc_matrix = data.frame(subject_id = expression_scores_tidy$Bcells$subject_id)
+sig_assoc_matrix[, c('DA_group', 'case_ctrl')] = sig_assoc_matrix$subject_id
+sig_assoc_matrix$DA_group = plyr::mapvalues(sig_assoc_matrix$DA_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+sig_assoc_matrix$case_ctrl = plyr::mapvalues(sig_assoc_matrix$case_ctrl, from = metadata$study_id_visit, to = metadata$case_control)
+sig_assoc_matrix = as_tibble(sig_assoc_matrix) %>% arrange(factor(DA_group, levels = c('HC', 'Inactive', 'Active', 'TNJDM')))
+
+programs_to_plot = c('Bcells', 'Bcells', 'CD4Tcells', 'CD4Tcells', 'CD4Tcells')
+names(programs_to_plot) = c('R17_Program5', 'R17_Program14', 'R17_Program1', 'R17_Program10',  'R17_Program17')
+
+for (i in names(programs_to_plot)){
+  j = programs_to_plot[i]
+  program = paste0(j, '_', i)
+  sig_assoc_matrix[program] = as.numeric(plyr::mapvalues(sig_assoc_matrix$subject_id, 
+                                                        from = expression_scores_tidy[[j]][["subject_id"]], 
+                                                        to = expression_scores_tidy[[j]][[i]]))
+  
+}
+#plot as quantiles
+sig_assoc_matrix = as.data.frame(sig_assoc_matrix)
+test = sapply(sig_assoc_matrix[, 4:9], function(X) ecdf(X)(X))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/program_comparisons_case-control_heatmap', height = 10, width = 6)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = sig_assoc_matrix$DA_group,
+          labCol = colnames(sig_assoc_matrix[, 4:9]), key = T, revC = F)
+dev.off()
+```
+
+```{r}
+#start to collate df of interest (DA)l: 
+sig_assoc_matrix = data.frame(subject_id = expression_scores_tidy$Bcells$subject_id)
+sig_assoc_matrix[, c('DA_group', 'case_ctrl')] = sig_assoc_matrix$subject_id
+sig_assoc_matrix$DA_group = plyr::mapvalues(sig_assoc_matrix$DA_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+sig_assoc_matrix$case_ctrl = plyr::mapvalues(sig_assoc_matrix$case_ctrl, from = metadata$study_id_visit, to = metadata$case_control)
+sig_assoc_matrix = as_tibble(sig_assoc_matrix) %>% arrange(factor(DA_group, levels = c('HC', 'Inactive', 'Active', 'TNJDM')))
+
+programs_to_plot = c('Bcells', 'CD4Tcells', 'NK', 'gdT', 'CD4Tcells','gdT', 'NK', 'CD8Tcells')
+names(programs_to_plot) = c('R17_Program9', 'R17_Program10',  'R13_Program12','R15_Program4', 'R17_Program17', 'R15_Program15', 'R13_Program8', 'R15_Program11')
+
+for (i in names(programs_to_plot)){
+  j = programs_to_plot[i]
+  program = paste0(j, '_', i)
+  sig_assoc_matrix[program] = as.numeric(plyr::mapvalues(sig_assoc_matrix$subject_id, 
+                                                        from = expression_scores_tidy[[j]][["subject_id"]], 
+                                                        to = expression_scores_tidy[[j]][[i]]))
+  
+}
+#plot as quantiles
+sig_assoc_matrix = as.data.frame(sig_assoc_matrix)
+test = sapply(sig_assoc_matrix[, 4:11], function(X) ecdf(X)(X))
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/program_comparisons_DA_heatmap', height = 10, width = 10)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = sig_assoc_matrix$DA_group,
+          labCol = colnames(sig_assoc_matrix[, 4:11]), key = T, revC = F)
+dev.off()
+```
