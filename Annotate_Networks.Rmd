@@ -1,0 +1,151 @@
+---
+title: "Network Annotation"
+output: html_document
+date: "2024-06-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries}
+#Script to run DECIPHER pipeline on JDM cross-long study data post-nmf run and visualize results
+library(Seurat)
+library(ggplot2)
+library(svglite)
+library(rlist)
+library(ape)
+library(matrixStats)
+library(gridExtra)
+library(patchwork)
+library(geiger)
+library(igraph)
+library(dplyr)
+library(parallel)
+library(reticulate)
+library(wTO)
+library(gplots)
+library(RColorBrewer)
+library(DescTools)
+library(fgsea)
+library(msigdbr)
+library(ggridges)
+library(stringr)
+```
+#load functions from DECIPHER method by 
+[Murrow, Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
+```{r source}
+source('DECIPHER-seq.functions.R')
+source('DECIPHER-seq.util.R')
+source('boot.cor.complete.R')
+source('cor.m.boot.test.R')
+```
+
+```{r gene loading similarity}
+#Calculate gene loading similarity to identify highly similar programs
+gene_correlation_matrix <- Gene_similarity(NMF_results_atK)
+
+gene_similarity_node_pvals <- Permutation_test_gene_cor(Network, gene_correlation_matrix)
+
+edge_weights_fisher = abs(FisherZ(edge.attributes(Network$filtered_network)$weight*edge.attributes(Network$filtered_network)$sign))
+
+pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/gene_loading_similarity_network.pdf', height = 10, width = 10)
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=colorRampPalette(c("grey", "purple"))(100)[cut(-log10(gene_similarity_node_pvals), breaks = c(0, seq(-log10(0.01), 4, length.out = 100)))],
+     edge.width=0.25, vertex.label.cex=0.5, vertex.size = 7, vertex.label.color="black", 
+     vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2, vertex.label = NA,
+     edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)],
+     main = "Gene loading similarity within module")
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "purple"))(100)), ncol=1))
+text(x=1.9, y = c(-0.4,0.4), labels = c("1e-2", "1e-4"), cex = 0.7)
+rasterImage(legend_image, 1.55, -0.45, 1.7,0.45)
+dev.off()
+```
+
+```{r gsea annotation of activity programs}
+#first need to collate scaled data from liger objects to nmf results
+#need scaled data for GSEA 
+jdm_crosslong_nmf <- lapply(cell.types, function(x){
+  nmf = jdm_crosslong_nmf[[x]]
+  liger = readRDS(paste0('Liger_objects/', list.files('Liger_objects/', pattern = x)))
+  nmf[["scale.data"]] <- liger@scale.data
+  return(nmf)
+})
+names(jdm_crosslong_nmf) = cell.types
+```
+
+
+```{r marker analysis}
+# GSEA with GO Biological Processes 
+path_df = msigdbr(species = "Homo sapiens", category="C5")
+path_df=subset(path_df, gs_subcat%in%c("GO:BP"))
+path_list = path_df %>% split(x = .$gene_symbol, f = .$gs_name)
+
+marker_gene_list <- Marker_gene_analysis(nmf_at_k, jdm_crosslong_nmf, max.cores = 40)
+saveRDS(marker_gene_list, 'program_marker_gene_lists.rds')
+
+GO_BP_fgsea_res = fgsea_test(marker_gene_list, Network, path_list)
+saveRDS(GO_BP_fgsea_res, file = 'GOBP_fgsea_res.rds')
+```
+
+```{r export GO_BP results}
+test =  unlist(lapply(GO_BP_fgsea_res$leadingEdge, function(x) paste( unlist(x), collapse=', ')))
+gobp_gsea_df = GO_BP_fgsea_res
+gobp_gsea_df$leadingEdge = test
+gobp_gsea_df = as.data.frame(gobp_gsea_df)
+write.csv(gobp_gsea_df, 'Supplement/GOBP_fgsea.csv', row.names = F)
+```
+
+```{r marker analysis and gsea run with Hallmark terms}
+# GSEA with Hallmark terms
+path_df = msigdbr(species = "Homo sapiens", category="H")
+path_list = path_df %>% split(x = .$gene_symbol, f = .$gs_name)
+Hallmark_fgsea_res = fgsea_test(marker_gene_list, Network, path_list)
+saveRDS(Hallmark_fgsea_res, files = 'Hallmark_fgsea_res.rds')
+```
+
+```{r reformat and filter gsea results}
+#Filter and compile gsea results
+GO_BP_fgsea_res <- readRDS('DECIPHER_outputs/GOBP_fgsea_res.rds')
+gobp_fgsea_list <- split(GO_BP_fgsea_res, GO_BP_fgsea_res$module)
+gobp_sig_list <- lapply(gobp_fgsea_list, function(x){
+  y <- x[x$fdr<0.01,]
+  y <- y[order(-NES),]})
+saveRDS(gobp_sig_list, file = 'DECIPHER_outputs/network_gobp_fgsea_sig.rds')
+marker_gene_list = readRDS('/program_marker_gene_lists.rds')
+```
+
+```{r reload gobps + markers}
+gobp_sig_list = readRDS('neely.jdm/NMF/DECIPHER_outputs/network_gobp_fgsea_sig.rds')
+program_markers = readRDS('neely.jdm/NMF/DECIPHER_outputs/program_marker_gene_lists.rds')
+GO_BP_fgsea_res = readRDS('neely.jdm/NMF/DECIPHER_outputs/GOBP_fgsea_res.rds')
+```
+
+```{r enrichment within modules}
+#Run module enrichment method - calculate p-values for uniqueness of gene set to given module
+sets_to_test = rbind(GO_BP_fgsea_res, Hallmark_fgsea_res)
+enrichment_pval = Get_enrichment_pvals(sets_to_test, Network, nreps = 10000)
+module_enrichment = readRDS('DECIPHER_outputs/module_enrichment_pval.rds')
+gsea_pvals = list.rbind(module_enrichment)
+gsea_pvals = cbind(gsea_pvals, gene_set = rownames(gsea_pvals))
+gsea_pvals = unnest(as_tibble(gsea_pvals))
+gsea_pvals %>% mutate(across(gene_set, factor))
+module_long <- gsea_pvals %>% gather(key = module, value = pval, Module_4:Module_3, factor_key = T)
+module_pval_sorted <- module_long %>% group_by(module) %>%
+  arrange(pval, .by_group = T)
+module_pvals <- module_pval_sorted %>% split(f = .$module)
+saveRDS(module_pvals, file = 'DECIPHER_outputs/module_pvals_sorted.rds')
+```
+
+```{r export sorted module enrichment}
+#Use openxlsx package to export sorted module enrichment pvals to excel workbook, results for each module on own sheet in workbook
+write.xlsx(module_pvals_sorted, file = 'Supplement/sup_table_module_enrichment_pvals.xlsx')
+```
+
+```{r export program markers}
+#Use openxlsx package to export program markers to excel workbook, results for each cell type on own sheet in workbook
+program_markers_labelled <- lapply(program_markers, function(X){
+  cbind(genes = rownames(X), X)
+})
+openxlsx::write.xlsx(program_markers_labelled, file = 'Supplement/sup_table_program_markers.xlsx')
+```
