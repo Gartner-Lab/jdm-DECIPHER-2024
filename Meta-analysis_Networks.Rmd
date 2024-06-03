@@ -1,0 +1,258 @@
+---
+title: "Meta-analysis Networks"
+output: html_document
+date: "2024-06-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries}
+#Script to run DECIPHER pipeline on JDM cross-long study data post-nmf run and visualize results
+library(Seurat)
+library(ggplot2)
+library(svglite)
+library(rlist)
+library(ape)
+library(matrixStats)
+library(gridExtra)
+library(patchwork)
+library(geiger)
+library(igraph)
+library(dplyr)
+library(parallel)
+library(reticulate)
+library(wTO)
+library(gplots)
+library(RColorBrewer)
+library(DescTools)
+library(fgsea)
+library(msigdbr)
+library(ggridges)
+library(stringr)
+```
+#load functions from DECIPHER method by 
+[Murrow, Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
+```{r source}
+source('DECIPHER-seq.functions.R')
+source('DECIPHER-seq.util.R')
+source('boot.cor.complete.R')
+source('cor.m.boot.test.R')
+```
+
+```{r metadata assoc - case-control}
+#Quantify association between programs and disease state (HC vs JDM)
+
+case_ctrl = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'binary', feature.to.test = 'case_control')
+```
+
+```{r plot case-control assoc}
+#custom plotting:
+feature_effect_size = case_ctrl[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size",])*as.numeric(feature_effect_size["effect_size_sign",]) 
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("blue", "red"))(100)[cut(node_val, breaks = seq(-3, 3, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'Case-Control')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("blue", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("-1", "1"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.75, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+```
+
+```{r metadata assoc - disease activity categories (4 levels)}
+#Quantify association between programs and disease state (HC, TN JDM, Active JDM, Inactive JDM)
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+expression_scores = readRDS('neely.jdm/NMF/DECIPHER_outputs/expression_scores.rds')
+sc_metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/jdm_crosslong_meta.rds')
+sc_metadata$disease_group = sc_metadata$study_id_visit
+sc_metadata$disease_group = plyr::mapvalues(sc_metadata$disease_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups, warn_missing = F)
+unique(sc_metadata$disease_group)
+sc_metadata$disease_group = factor(sc_metadata$disease_group, levels = c('TNJDM', 'Active', 'Inactive', 'HC'))
+saveRDS(sc_metadata, file = 'neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+
+sc_metadata <- readRDS('neely.jdm/crosslong_02SEP21/Objects/sc_metadata.rds')
+unique(sc_metadata$disease_group)
+colnames(sc_metadata)[which(colnames(sc_metadata) == 'study_id_visit')] = 'Sample'
+da_assoc = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'categorical>2', feature.to.test = 'disease_group')
+names(da_assoc) = c('res', 'pairwise_comp')
+```
+
+```{r plot disease state associations}
+#custom plotting:
+feature_effect_size = da_assoc$res[,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size-eta^2",])*as.numeric(feature_effect_size["effect_size_sign",])
+node_val[node_val<0] = 0 #negative eta^2 is meaningless - H metric < n groups
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("grey", "red"))(100)[cut(node_val, breaks = seq(0, 1, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'Disease Group')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+
+
+```
+
+```{r metadata assoc - med use}
+#Quantify association between programs and disease state (On vs off meds)
+sc_metadata$on_meds = sc_metadata$Sample
+metadata = readxl::read_xlsx('neely.jdm/crosslong_02SEP21/metadata_updated.xlsx')
+sc_metadata$on_meds = plyr::mapvalues(sc_metadata$on_meds, from = metadata$study_id_visit, to = metadata$on_meds, warn_missing = F)
+
+sc_metadata$on_meds <- factor(sc_metadata$on_meds, levels = c('no', 'yes')) #imbalanced groups, need larger group to be first level, otherwise effect size signs are backwards 
+med_use = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'binary', feature.to.test = 'on_meds')
+```
+
+```{r plot med use assoc}
+#custom plotting:
+feature_effect_size = med_use[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size",])*as.numeric(feature_effect_size["effect_size_sign",]) 
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("blue", "red"))(100)[cut(node_val, breaks = seq(-3, 3, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'Medication Use')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("blue", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("-1", "1"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.75, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+```
+
+```{r metadata assoc - MSA status}
+#Quantify association between programs and MSA status
+metadata = readxl::read_xlsx('metadata_updated.xlsx')
+metadata <- metadata %>% mutate(MSA = ifelse(is.na(MSA), new_diseasegroups, MSA))
+sc_metadata$MSA = plyr::mapvalues(sc_metadata$study_id_visit, from = metadata$study_id_visit, to = metadata$MSA, warn_missing = F)
+
+sc_metadata$MSA <- factor(sc_metadata$MSA, levels = c('NXP2', 'TIF1y', 'MDA5', 'NEG', 'UNK', 'HC')) 
+colnames(sc_metadata)[which(colnames(sc_metadata) == 'study_id_visit')] = 'Sample'
+
+msa_assoc = Calculate_metadata_associations(Network, expression_scores, sc_metadata, type = 'categorical>2', feature.to.test = 'MSA')
+
+names(msa_assoc) = c('res', 'pairwise_comp')
+saveRDS(msa_assoc, file = 'DECIPHER_outputs/MSA_anova.rds')
+```
+
+
+```{r plot msa assoc}
+#custom plotting:
+feature_effect_size = msa_assoc[[1]][,names(V(Network$filtered_network))]
+node_val = as.numeric(feature_effect_size["effect_size-eta^2",])*as.numeric(feature_effect_size["effect_size_sign",]) 
+node_size = rep(3, length(V(Network$filtered_network)))
+node_size[feature_effect_size["p_value",]<0.05] = 5
+node_size[feature_effect_size["p_value",]<0.01] = 7
+node_size[feature_effect_size["p_value",]<0.001] = 10
+
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+       vertex.color=colorRampPalette(c("grey", "red"))(100)[cut(node_val, breaks = seq(0, 1, length.out = 101), include.lowest = T)],
+       edge.width=0.25, vertex.label.cex=0.5, vertex.size = node_size, vertex.label.color="black", 
+       vertex.label.family="Helvetica", vertex.frame.color=NA, vertex.label.font=2,
+       edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label = NA, main = 'MSA Status')
+legend_image <- as.raster(matrix(rev(colorRampPalette(c("grey", "red"))(100)), ncol=1))
+text(x=1.7, y = c(-0.4,0.2), labels = c("min", "max"), cex = 0.7)
+text(x=1.6, y = 0.5, labels = c("Effect size"), cex = 1)
+rasterImage(legend_image, 1.35, -0.45, 1.5,0.25)
+legend("left",  inset = 0,    
+         legend = c("n.s.", "0.05", "0.01", "0.001"),
+         col = "grey", pt.cex = c(0.3, 0.5, 0.7, 1)*2,
+         pch = 19, bty = "n", title = "p-value")
+```
+
+```{r reogranize patient expression heatmaps for figures}
+#collate df of interest (case control): 
+sig_assoc_matrix = data.frame(subject_id = expression_scores_tidy$Bcells$subject_id)
+sig_assoc_matrix[, c('DA_group', 'case_ctrl')] = sig_assoc_matrix$subject_id
+sig_assoc_matrix$DA_group = plyr::mapvalues(sig_assoc_matrix$DA_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+sig_assoc_matrix$case_ctrl = plyr::mapvalues(sig_assoc_matrix$case_ctrl, from = metadata$study_id_visit, to = metadata$case_control)
+sig_assoc_matrix = as_tibble(sig_assoc_matrix) %>% arrange(factor(DA_group, levels = c('HC', 'Inactive', 'Active', 'TNJDM')))
+
+programs_to_plot = c('Bcells', 'Bcells', 'CD4Tcells', 'CD4Tcells', 'CD4Tcells')
+names(programs_to_plot) = c('R17_Program5', 'R17_Program14', 'R17_Program1', 'R17_Program10',  'R17_Program17')
+
+for (i in names(programs_to_plot)){
+  j = programs_to_plot[i]
+  program = paste0(j, '_', i)
+  sig_assoc_matrix[program] = as.numeric(plyr::mapvalues(sig_assoc_matrix$subject_id, 
+                                                        from = expression_scores_tidy[[j]][["subject_id"]], 
+                                                        to = expression_scores_tidy[[j]][[i]]))
+  
+}
+#plot as quantiles
+sig_assoc_matrix = as.data.frame(sig_assoc_matrix)
+test = sapply(sig_assoc_matrix[, 4:9], function(X) ecdf(X)(X))
+pdf(file = 'DECIPHER_outputs/program_comparisons_case-control_heatmap', height = 10, width = 6)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = sig_assoc_matrix$DA_group,
+          labCol = colnames(sig_assoc_matrix[, 4:9]), key = T, revC = F)
+dev.off()
+```
+
+```{r}
+#start to collate df of interest (DA)l: 
+sig_assoc_matrix = data.frame(subject_id = expression_scores_tidy$Bcells$subject_id)
+sig_assoc_matrix[, c('DA_group', 'case_ctrl')] = sig_assoc_matrix$subject_id
+sig_assoc_matrix$DA_group = plyr::mapvalues(sig_assoc_matrix$DA_group, from = metadata$study_id_visit, to = metadata$new_diseasegroups)
+sig_assoc_matrix$case_ctrl = plyr::mapvalues(sig_assoc_matrix$case_ctrl, from = metadata$study_id_visit, to = metadata$case_control)
+sig_assoc_matrix = as_tibble(sig_assoc_matrix) %>% arrange(factor(DA_group, levels = c('HC', 'Inactive', 'Active', 'TNJDM')))
+
+programs_to_plot = c('Bcells', 'CD4Tcells', 'NK', 'gdT', 'CD4Tcells','gdT', 'NK', 'CD8Tcells')
+names(programs_to_plot) = c('R17_Program9', 'R17_Program10',  'R13_Program12','R15_Program4', 'R17_Program17', 'R15_Program15', 'R13_Program8', 'R15_Program11')
+
+for (i in names(programs_to_plot)){
+  j = programs_to_plot[i]
+  program = paste0(j, '_', i)
+  sig_assoc_matrix[program] = as.numeric(plyr::mapvalues(sig_assoc_matrix$subject_id, 
+                                                        from = expression_scores_tidy[[j]][["subject_id"]], 
+                                                        to = expression_scores_tidy[[j]][[i]]))
+  
+}
+#plot as quantiles
+sig_assoc_matrix = as.data.frame(sig_assoc_matrix)
+test = sapply(sig_assoc_matrix[, 4:11], function(X) ecdf(X)(X))
+pdf(file = 'DECIPHER_outputs/program_comparisons_DA_heatmap', height = 10, width = 10)
+heatmap.2(as.matrix(test), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(0,1,length.out=101), 
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(12, 12), 
+          Rowv = NULL, Colv = NULL, dendrogram = 'none',
+          labRow = sig_assoc_matrix$DA_group,
+          labCol = colnames(sig_assoc_matrix[, 4:11]), key = T, revC = F)
+dev.off()
+```
