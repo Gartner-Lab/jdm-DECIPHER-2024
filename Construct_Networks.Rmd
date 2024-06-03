@@ -1,0 +1,339 @@
+---
+title: "JDM Network Construction using DECIPHERseq"
+output: html_document
+date: "2024-06-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries}
+#Script to run DECIPHER pipeline on JDM cross-long study data post-nmf run and visualize results
+library(Seurat)
+library(ggplot2)
+library(svglite)
+library(rlist)
+library(ape)
+library(matrixStats)
+library(gridExtra)
+library(patchwork)
+library(geiger)
+library(igraph)
+library(dplyr)
+library(parallel)
+library(reticulate)
+library(wTO)
+library(gplots)
+library(RColorBrewer)
+library(DescTools)
+library(fgsea)
+library(msigdbr)
+library(ggridges)
+library(stringr)
+```
+#load functions from DECIPHER method by 
+[Murrow, Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
+```{r source}
+source('DECIPHER-seq.functions.R')
+source('DECIPHER-seq.util.R')
+source('boot.cor.complete.R')
+source('cor.m.boot.test.R')
+```
+
+```{r load nmf k sweep results}
+jdm_crosslong_nmf <- readRDS('/nmf_ksweep_results_compiled.rds') 
+```
+
+```{r build/load trees, outlier objects}
+#first, build phylo trees
+phylo_trees <- lapply(jdm_crosslong_nmf, build_phylo_tree)
+#phylo_trees <- readRDS('neely.jdm/NMF/DECIPHER_outputs/crosslong_phylo_trees.rds')
+
+```
+
+```{r outliers B cells}
+#calculate outlier scores for K sweep 
+program_outlier_score <- lapply(jdm_crosslong_nmf, identify_outlier_programs)
+
+#plot program outlier scores for each cell type
+outlier_plots <- lapply(program_outlier_score$B, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('B cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers CD8T}
+outlier_plots <- lapply(program_outlier_score$CD8T, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('CD8T cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers CD4T}
+outlier_plots <- lapply(program_outlier_score$CD4T, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('CD4T cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+
+```
+
+```{r outliers myeloid}
+outlier_plots <- lapply(program_outlier_score$myeloid, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('myeloid cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers NK}
+outlier_plots <- lapply(program_outlier_score$NK, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('NK cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r outliers gdT}
+outlier_plots <- lapply(program_outlier_score$gdT, function(x){
+  data <- as.data.frame(x)
+  rownames(data) <- 1:length(x)
+  ggplot(data, aes(y = x, x = as.numeric(rownames(data)))) + geom_point(aes(y = x, color = x>5)) + 
+    xlab('Programs') + ylab('Outlier Influence') + 
+    theme_classic() +
+    geom_hline(yintercept = 5, linetype = 2) + ylim(0, 20)  + 
+    theme(legend.position = 'none') + 
+    ggtitle(paste0('gdT cells ', regmatches(names(x), regexpr('^R[(0-9)]*', names(x)))))
+})
+marrangeGrob(grobs = outlier_plots, ncol = 3, nrow = 4, as.table = FALSE)
+```
+
+```{r phylo thresholds}
+#define distance threshold for phylo trees
+suggested_thresholds = suggest_dist_thresh(phylo_trees)
+suggested_thresholds 
+#use 0.2 based on hists
+p = plot_hists(phylo_trees, thresh.use = 0.2)
+marrangeGrob(p, ncol = 3, nrow = 2)
+
+```
+
+```{r partition trees}
+#partition trees for calculating subtree K metric
+phylo_partitions = mapply(partition_phylo_tree, x = phylo_trees, y = program_outlier_score, dist.thresh =0.3, outlier.thresh = 5, SIMPLIFY = F)
+par(mfrow=c(1,6), mar=c(1,1,1,1))
+p <- plot_phylo_trees(phylo_trees, phylo_partitions)
+```
+
+```{r k metrics}
+#Method calculates weighted number of subtrees in phylo tree covered by rank at given K
+K_metrics = mapply(calculate_K_metric, clusters = phylo_partitions, K.max = 40, SIMPLIFY = FALSE)
+```
+
+```{python kneed}
+#load python modules necessary for kneed-based K suggestion
+import matplotlib as plt
+from kneed import DataGenerator as dg, KneeLocator
+import kneed
+```
+
+```{r pick k knee}
+#K suggest method for ID'ing elbow on weighted subtree plot based on kneedle algorithm as implemented by Kevin Arvai
+k.use = mapply(suggest_k_knee, k_metrics = K_metrics, sensitivity =1)
+print(k.use)
+```
+[kneed package](https://github.com/arvkevi/kneed)
+
+
+```{r}
+#collect nmf results at optimal K
+NMF_results_atK <- mapply(NMF_results_opt_k, jdm_crosslong_nmf, k.use, program_outlier_score, SIMPLIFY = F)
+saveRDS(NMF_results_atK, file = 'neely.jdm/NMF/DECIPHER_outputs/jdm_crosslong_nmf_at_k.rds')
+```
+
+```{r reload}
+NMF_results_atK <- readRDS('neely.jdm/NMF/DECIPHER_outputs/jdm_crosslong_nmf_at_k.rds')
+```
+
+```{r update metadata}
+#update metadata to include HC category
+metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/metadata.RDS')
+covariates = read.csv('neely.jdm/crosslong_02SEP21/JDM_additional_covariates.csv')
+covariates$DA_cat[which(covariates$DA_cat == '')] =  'HC'
+metadata$dis_act = metadata$study_id_visit
+metadata$dis_act =  plyr::mapvalues(metadata$dis_act, from = covariates$study_id_visit, to = covariates$DA_cat, warn_missing = F)
+metadata$dis_act = factor(metadata$dis_act, levels = c('high_da', 'low_da', 'inactive', 'HC'))
+saveRDS(metadata, file = 'neely.jdm/crosslong_02SEP21/Objects/metadata.RDS')
+```
+
+```{r calc sample level H scores}
+#need course grained cell labels to calculate H scores (expression scores)
+#raw NMF results stored in NMF_results_atK don't have course grained cell labels - pull cell IDs from NMF results
+metadata = readRDS('neely.jdm/crosslong_02SEP21/Objects/metadata.RDS')
+cell.types = names(NMF_results_atK)
+expression_scores <- mcmapply(function(nmf, metadata, cell_type){
+  cell_ids = rownames(nmf$H)
+  meta_cells = metadata[cell_ids,]
+  meta_cells$Type = cell_type
+  meta_cells$Sample = meta_cells$study_id_visit
+  calc.H.score(nmf, meta_cells)}, 
+  nmf = NMF_results_atK, metadata = list(metadata), cell_type = cell.types, mc.cores = 6, SIMPLIFY = F)
+```
+
+```{r cor matrices}
+#calculate correlation matrices from expression scores
+#specify order of expression scores to match across cell types - important for patient matching for network construction
+order = rownames(expression_scores$Bcells) 
+expression_scores = lapply(expression_scores, function(x){
+  x[order,]
+})
+expression_score_cor = cor.m.boot.test(list.cbind(expression_scores), null.hyp = 0, alternative = 'two.sided')
+expression_score_cor$sig.cor = expression_score_cor$cor
+expression_score_cor$sig.cor[which(expression_score_cor$p> 0.05)] = NA
+
+```
+
+
+
+```{r network construction and community detection}
+#Construct network based on adjacency matrix
+Network <- Construct_network(expression_score_cor)
+adjacency_matrix <- Network$mat
+py_run_string("import leidenalg as la; import igraph as ig; import numpy as np")
+py_run_string("G = ig.Graph.Weighted_Adjacency(r.adjacency_matrix.tolist())")
+
+# sweep across a range of resolutions
+py_run_string("profile = optimiser.resolution_profile(G, la.CPMVertexPartition, 
+        weights = 'weight', resolution_range=(0.001, 0.4), number_iterations = 0)")
+sweep = py$profile
+modularity = lapply(sweep, function(x){x$modularity})
+# Use "resolution" that gives max modularity
+partition_use = sweep[[which.max(unlist(modularity))]]
+py_run_string("partition = r.partition_use")
+py_run_string("diff = optimiser.optimise_partition(partition)")
+
+# Optimise this partition
+while(py$diff!=0){
+  py_run_string("diff = optimiser.optimise_partition(partition)")
+  py_run_string("print(diff)")
+}
+clustering_res = py$partition
+modules = clustering_res$membership + 1
+names(modules) = colnames(adjacency_matrix)
+Network$modules = modules
+
+#Filter network based on modules - poorly connected nodes excluded
+Network <- Filter_network(Network)
+```
+
+
+```{r plotting configs}
+#set/customize module and cell type colors 
+modules = sort(Network$modules)
+network_module_cols_filtered=network_module_cols[as.numeric(levels(as.factor(unlist(V(Network$filtered_network)$module))))]
+names(network_module_cols_filtered) = levels(as.factor(unlist(V(Network$filtered_network)$module)))
+excluded_module_cols = colorRampPalette(brewer.pal(9, 'Greys'))(max(modules)-length(network_module_cols_filtered))
+names(excluded_module_cols) = unique(modules)[which(unique(modules) %ni% names(network_module_cols_filtered))]
+module_palette_all = c(network_module_cols_filtered, excluded_module_cols)
+module_palette_all = module_palette_all[order(as.numeric(names(module_palette_all)))]
+module_colors = module_palette_all[as.numeric(as.factor(modules))]
+
+cell_types = gsub('([A-Za-z0-9.])\\.R[0-9]{2,2}_Program[0-9]{1,2}', replacement = '\\1', names(modules))
+cell_type.cols = cell_type_cols[as.numeric(as.factor(cell_types))]
+```
+
+
+```{r plot networks}
+#plot filtered network
+vertex.identity = gsub('([A-Za-z0-9.])\\.R[0-9]{2,2}_Program[0-9]{1,2}', replacement = '\\1', names(V(Network$filtered_network)))
+Network$filtered_network = set_vertex_attr(Network$filtered_network, 'group', value = vertex.identity)
+
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=cell_type_cols[as.numeric(as.factor(unlist(V(Network$filtered_network)$group)))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label.cex=0.5, vertex.size = 7, vertex.label = NA, vertex.frame.color=NA)
+legend("right",  inset = -0.05,    
+         legend = levels(as.factor(unlist(V(Network$filtered_network)$group))),
+         pt.bg = cell_type_cols, 
+         col = cell_type_cols,
+         pch = 21, bty = "n", title = "Cell Type")
+```
+
+```{r plot networks - unfiltered}
+#plot unfiltered network
+vertex.identity = gsub('([A-Za-z0-9.])\\.R[0-9]{2,2}_Program[0-9]{1,2}', replacement = '\\1', names(V(Network$network)))
+Network$network = set_vertex_attr(Network$network, 'group', value = vertex.identity)
+
+plot(Network$network, layout = Network$network_coords, 
+     vertex.color=cell_type_cols[as.numeric(as.factor(unlist(V(Network$network)$group)))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$network)$sign>0)], vertex.label.cex=0.5, vertex.size = 7, vertex.label = NA, vertex.frame.color=NA)
+legend("right",  inset = -0.05,    
+         legend = levels(as.factor(unlist(V(Network$network)$group))),
+         pt.bg = cell_type_cols, 
+         col = cell_type_cols,
+         pch = 21, bty = "n", title = "Cell Type")
+```
+
+```{r}
+#plot filtered colored by module
+Network$filtered_network = set_vertex_attr(Network$filtered_network, 'module', value = Network$filtered_modules)
+
+plot(Network$filtered_network, layout = Network$filtered_network_coords, 
+     vertex.color=network_module_cols[as.factor(unlist(V(Network$filtered_network)$module))],
+     edge.width=0.25, edge.color = c(NA, "grey20")[factor(E(Network$filtered_network)$sign>0)], vertex.label.cex=0.5, vertex.size = 7, vertex.label = NA, vertex.frame.color=NA)
+legend("right",  inset = 0.05,    
+         legend = levels(as.factor(unlist(V(Network$filtered_network)$module))),
+         pt.bg = network_module_cols, 
+         col = network_module_cols,
+         pch = 21, bty = "n", title = "Module")
+```
+
+
+```{r heatmap view of network}
+#plot heatmap view of network
+heatmap.2(as.matrix(expression_score_cor$cor[names(modules), names(modules)]), trace="none",
+          density.info="none", scale="none", 
+          breaks=seq(-1,1,length.out=101), ColSideColors = module_colors, 
+          RowSideColors = cell_type.cols,
+          col=colorRampPalette(rev(brewer.pal(10, "RdBu")))(100), margins=c(8,8), 
+          Rowv = F, Colv=F, dendrogram = 'none',
+          labRow = F,
+          labCol = F, key = T)
+legend("left",  inset = 0.05,    
+         legend = levels(as.factor(cell_types)),
+         pt.bg = unique(cell_type_cols), 
+         col = unique(cell_type_cols),
+         pch = 21, bty = "n", title = "Cell Type")
+```
