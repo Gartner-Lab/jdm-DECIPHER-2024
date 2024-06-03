@@ -1,0 +1,24 @@
+
+0) Fix metadata IDs
+   `fix_jdm_metadata_ids.R`
+1) Load into Seurat and Filter
+   `filter_jdm.R`
+2a) RNA: run SoupX once per well
+   `run_soupx_well.R`
+ b) ADT: run DSB once per well
+    `run_dsb_jdm.R`
+3a) RNA: run Harmony
+   `merge_jdm_ds_harmony.R`
+ b) ADT: run RPCA merge
+   `run_rpca.R`
+4) Run azimuth on the RNA data
+   `run_azimuth_jdm.R` (run_azimuth.sh)
+5) Run WNN
+   `run_wnn.R`
+6) Find markers / plot
+   `plot_0706.R`
+7) Filter --> Re-run clustering
+   `remove_T4-reclus.R` (remove_reclus.sh)
+8) Plot a final time
+   `plot_0722.R`
+9) Generate the h5ad using R and then python
