@@ -1,0 +1,154 @@
+---
+title: "jdm_external_cohort_analysis"
+output: html_document
+date: "2023-12-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+```{r setup, include = FALSE}
+knitr::opts_knit$set(root.dir = 'REPO_ROOT')
+#NOT FUNCTIONAL CHUNK, SWAPPED DIRECTORIES FOR PUBLISHED CODE
+```
+
+```{r load libraries}
+library(Seurat)
+library(ggplot2)
+library(svglite)
+library(rlist)
+library(ape)
+library(matrixStats)
+library(gridExtra)
+library(patchwork)
+library(geiger)
+library(igraph)
+library(dplyr)
+library(tidyverse)
+library(parallel)
+library(reticulate)
+library(wTO)
+library(gplots)
+library(RColorBrewer)
+library(DescTools)
+library(fgsea)
+library(msigdbr)
+library(ggridges)
+library(stringr)
+library(ggpubr)
+```
+
+#load functions from DECIPHER method by 
+[Murrow, Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
+```{r source}
+source('DECIPHER-seq.functions.R')
+source('DECIPHER-seq.util.R')
+source('boot.cor.complete.R')
+source('cor.m.boot.test.R')
+```
+
+```{r load marker scores and new seurat object}
+program_markers = readRDS('NMF/DECIPHER_outputs/program_marker_gene_lists.rds')
+
+load('data/external_cohort/wnn_RNA_subcluster_obj.annotations.v1.RData')
+
+```
+
+```{r add patient metadata}
+covariates = readxl::read_xlsx('data/external_cohort/TCR_BCRseq1_da.xlsx')
+metadata = sobj@meta.data
+metadata$case_ctrl = metadata$individual
+metadata$case_ctrl =  plyr::mapvalues(metadata$case_ctrl, from = covariates$study_id, to = covariates$case_control, warn_missing = T)
+metadata$case_ctrl = factor(metadata$case_ctrl, levels = c('JDM', 'HC'))
+sobj <- AddMetaData(sobj, metadata)
+```
+
+###AUCell method in validation cohort
+
+```{r}
+source('proxy_AUCscore.R') #this function contains built in plotting of umaps and boxplots for case-control comparisons
+
+#case control: CD4T1, CD4T10, CD4T17,  B5, B14; 
+#for disease activity association: IFN hubs (B7, CD4T4, CD8T7, NK13, gdT13, M17), B9, CD4T10, NK12, gdT4, CD8T11, NK8, gdT15, CD4T9, B10, NK9, CD4T17, M10, B17 
+
+programs <- c('R17_Program1', 'R17_Program10', 'R17_Program17', 'R17_Program5', 'R17_Program14', 'R17_Program7', 'R17_Program4', 'R15_Program7', 'R13_Program13', 'R15_Program13', 'R17_Program17', 'R17_Program9', 'R13_Program12', 'R15_Program4', 'R15_Program11', 'R13_Program8', 'R15_Program15', 'R17_Program9', 'R17_Program10', 'R13_Program9', 'R17_Program17', 'R17_Program10', 'R17_Program17')
+type = c('CD4+T', 'CD4+T', 'CD4+T', 'B', 'B', 'B', 'CD4+T', 'CD8+T', 'NK', 'gdT', 'myeloid', 'B', 'NK', 'gdT', 'CD8+T', 'NK', 'gdT', 'CD4+T', 'B', 'NK', 'CD4+T', 'myeloid', 'B')
+nmf_type = c('CD4Tcells', 'CD4Tcells', 'CD4Tcells', 'Bcells', 'Bcells', 'Bcells', 'CD4Tcells', 'CD8Tcells', 'NK', 'gdT', 'Myeloid', 'Bcells', 'NK', 'gdT', 'CD8Tcells', 'NK', 'gdT', 'CD4Tcells', 'Bcells', 'NK', 'CD4Tcells', 'Myeloid', 'Bcells')
+
+aucell_program_scores = list() 
+for(i in 1:length(programs)){
+  res <- proxy_AUCscore(sobj, type[i], nmf_type[i], program_markers, programs[i])
+  aucell_program_scores[[i]] = res
+}
+names(aucell_program_scores) = paste0(nmf_type, '_', regmatches(programs,regexpr('Program[0-9]{1,2}', programs)))
+aucell_program_scores_t <- mapply(function(x, y, z){
+  auc_label <- paste0(y, '_', regmatches(z,regexpr('Program[0-9]{1,2}', z)))
+  x <- x %>% add_column(program = auc_label)
+  return(x)
+}, x = aucell_program_scores, y = nmf_type, z = programs, SIMPLIFY = F)
+saveRDS(aucell_program_scores, file = 'NMF/validation_analyses/JDM_validation_cohort/AUCell_Results/aucell_program_scores.rds')
+```
+
+
+```{r}
+#compiling for DA score correlations
+library(tidyverse)
+aucell_program_scores_t <- mapply(function(x, y, z){
+  auc_label <- paste0(y, '_', regmatches(z,regexpr('Program[0-9]{1,2}', z)))
+  x <- x %>% add_column(program = auc_label)
+  return(x)
+}, x = aucell_program_scores, y = nmf_type, z = programs, SIMPLIFY = F)
+auc_res <- list_rbind(aucell_program_scores_t)
+auc_res <- distinct(auc_res)
+da_covariates = readxl::read_xlsx('data/external_cohort/TCR_BCRseq1_da.xlsx')
+da_covariates[6:7, "vasglobal"] <- 0
+auc_res <- auc_res %>% add_column(DA = NA)
+auc_res[["DA"]] <- auc_res[["individual"]] %>% plyr::mapvalues(from = da_covariates$study_id, to = da_covariates$vasglobal)
+auc_da <- auc_res %>% pivot_wider(names_from = program, values_from = AUC)
+auc_da <- auc_da %>% mutate(AUC = as.numeric(AUC))
+auc_da <- auc_da %>% mutate(DA = as.numeric(DA))
+```
+
+```{r}
+#plotting
+fmt_dcimals <- function(decimals=0){
+    function(x) format(x,nsmall = decimals,scientific = FALSE)
+}
+
+#non iterative version works fine, vectorized/looped version causes problems with scale
+ggplot(auc_da, aes(x = DA, y = Bcells_Program9)) +
+    geom_point() +
+    ggpubr::stat_cor(method = 'spearman') +
+    scale_y_continuous(labels = fmt_dcimals(3))
+
+
+auc_res <- auc_res %>% mutate(DA = as.numeric(DA))
+auc_res <- auc_res %>% mutate(case_ctrl = as.character(case_ctrl))
+auc_res <- as.data.frame(auc_res)
+
+plot_da_scatter <- function(group, data) {
+  ## check if input is valid
+  if (!group %in% auc_res$program) stop("Program not listed in the data set.")
+  
+  ggplot(mapping = aes(x = DA, y = AUC)) +
+    geom_point(data = filter(data, program %in% group & case_ctrl == 'JDM'), 
+               color = "#007cb1", alpha = .5, size = 4) +
+    geom_point(data = filter(data, program %in% group & case_ctrl == 'HC'), 
+               shape = 1, color = "grey45", size = 4) +
+    ggpubr::stat_cor(data = filter(data, program %in% group), method = 'spearman') +
+    scale_x_continuous(labels = fmt_dcimals(3)) +
+    ## add title automatically based on subset choice
+    labs(x = "Disease Activity (VASglobal)", y = group, 
+         title = 'Proxy Program Correlation with Disease Activity', color = NULL)
+}
+
+for(i in unique(auc_res$program)){
+  pdf(paste0('NMF/validation_analyses/JDM_validation_cohort/AUCell_Results/', i, '_AUC_DA_spearman.pdf'), height = 8, width = 8)
+  plot <- plot_da_scatter(i, auc_res)
+  print(plot)
+  dev.off()
+}
+```
+
+
