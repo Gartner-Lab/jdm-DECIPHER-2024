@@ -9,7 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r load libraries}
-#Script to run DECIPHER pipeline on JDM cross-long study data post-nmf run and visualize results
+#Script to run network GEP/module annotation section of the DECIPHER pipeline on JDM cross-long study data (post-nmf run and network construction)
 library(Seurat)
 library(ggplot2)
 library(svglite)
@@ -33,7 +33,7 @@ library(ggridges)
 library(stringr)
 ```
 #load functions from DECIPHER method by 
-[Murrow, Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
+[Murrow, ..., Rabadam et al.](https://doi.org/10.1016/j.cels.2022.06.005)
 ```{r source}
 source('DECIPHER-seq.functions.R')
 source('DECIPHER-seq.util.R')
@@ -49,7 +49,7 @@ gene_similarity_node_pvals <- Permutation_test_gene_cor(Network, gene_correlatio
 
 edge_weights_fisher = abs(FisherZ(edge.attributes(Network$filtered_network)$weight*edge.attributes(Network$filtered_network)$sign))
 
-pdf(file = 'neely.jdm/NMF/DECIPHER_outputs/gene_loading_similarity_network.pdf', height = 10, width = 10)
+pdf(file = 'DECIPHER_outputs/gene_loading_similarity_network.pdf', height = 10, width = 10)
 plot(Network$filtered_network, layout = Network$filtered_network_coords, 
      vertex.color=colorRampPalette(c("grey", "purple"))(100)[cut(-log10(gene_similarity_node_pvals), breaks = c(0, seq(-log10(0.01), 4, length.out = 100)))],
      edge.width=0.25, vertex.label.cex=0.5, vertex.size = 7, vertex.label.color="black", 
@@ -116,9 +116,9 @@ marker_gene_list = readRDS('/program_marker_gene_lists.rds')
 ```
 
 ```{r reload gobps + markers}
-gobp_sig_list = readRDS('neely.jdm/NMF/DECIPHER_outputs/network_gobp_fgsea_sig.rds')
-program_markers = readRDS('neely.jdm/NMF/DECIPHER_outputs/program_marker_gene_lists.rds')
-GO_BP_fgsea_res = readRDS('neely.jdm/NMF/DECIPHER_outputs/GOBP_fgsea_res.rds')
+gobp_sig_list = readRDS('DECIPHER_outputs/network_gobp_fgsea_sig.rds')
+program_markers = readRDS('DECIPHER_outputs/program_marker_gene_lists.rds')
+GO_BP_fgsea_res = readRDS('DECIPHER_outputs/GOBP_fgsea_res.rds')
 ```
 
 ```{r enrichment within modules}
