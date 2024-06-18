@@ -1,0 +1,9 @@
+Workflow order of scripts:
+1. DEG_TNJDM_HC_adt
+2. DEG_TNDJM_HC_rna
+3. Cluster_visualisation_and_top_marker_analysis
+4. Cell_proportion_analysis
+5. Visualization_of_differentially_expressed_ADTs_for_selected_clusters
+6. Identify_IFN_genes
+7. Visualization_of_IFN_score_cell_cluster_and_disease_activity_by_patient
+8. Visualization_of_IFN_score_disease_activity_and_CD169_for_CD14_monocytes
