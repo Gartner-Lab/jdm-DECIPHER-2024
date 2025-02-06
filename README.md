@@ -3,7 +3,7 @@ Online: https://doi.org/10.1172/jci.insight.176963
 
 This is the codebase to replicate key results from Rabadam et al. The datasets presented in this study are deposited in the CZ CELLxGENE Discover resource as [“CITEseq of JDM PBMCs”](https://cellxgene.cziscience.com/collections/c672834e-c3e3-49cb-81a5-4c844be4a975) for download and in an interactive format.
 
-Vignettes that walk you through the computational analysis are available here [Github Docs]. 
+Vignettes that walk you through the computational analysis are available here ["Github Docs"](https://grabadam-cal.github.io/jdm-DECIPHER-2024/). 
 
 ### Original v1 DECIPHERseq method 
 Murrow, ..., Rabadam, et al. _Cell Systems_, 2022. https://doi.org/10.1016/j.cels.2022.06.005
